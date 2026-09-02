@@ -30,3 +30,6 @@ System prompt lives in `CONTEXT.md` (next to the DLL).
 ## Disclaimer
 This is an unofficial third-party tool. Use at your own risk.  
 Respect the game’s Terms of Service and anti-cheat rules.
+
+## Showcase
+![HytaleBot Example](examp.png)
