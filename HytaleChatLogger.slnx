@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="HytaleChatLogger.vcxproj" Id="ba7989ad-b5cf-42f4-8711-d202895e9b9e" />
+</Solution>

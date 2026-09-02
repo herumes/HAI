@@ -1,0 +1,53 @@
+# Build outputs
+x64/
+Debug/
+Release/
+*.user
+*.suo
+*.sdf
+*.opensdf
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.dll
+*.exe
+*.obj
+*.iobj
+*.ipdb
+
+# Visual Studio / IDE
+.vs/
+.vscode/
+*.VC.db
+*.VC.VC.opendb
+
+# vcpkg (very important – never commit this)
+vcpkg_installed/
+vcpkg_installed/**
+**/vcpkg_installed/
+
+# Settings & personal data
+*settings.txt
+ignored_users.txt
+whitelist_users.txt
+hitbot_*.txt
+josebot_*.txt
+bot_settings.txt
+*.log
+
+# Temporary / local
+*.tmp
+*.bak
+*.swp
+*~
+CMakeUserPresets.json
+bot_context_dump.txt
+
+# Optional – uncomment if you don’t want the knowledge files in the repo
+hytale_items.json
+hytale_mobs.json
+items_compact.json
+mobs_compact.json
+
+backup-old/
