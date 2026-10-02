@@ -1,10 +1,13 @@
 #include "pch.h"
 #include "hooks.hpp"
+#include <intrin.h>   // _ReturnAddress
 #include "common.hpp"
 #include "chat.hpp"
 #include "settings.hpp"
 #include "shared.hpp"
 #include "extras.hpp"
+#include "hookthunk.hpp"
+#include "gamesdk.hpp"  // GsdkFrameCarriesChatSends
 
 // Forward decls from chat_core
 void ProcessMessage(void* message);
@@ -62,6 +65,12 @@ bool SafeRead(const void* src, void* dst, size_t n) {
     if (!IsPlausiblePtr(src)) return false;
     __try { memcpy(dst, src, n); return true; }
     __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+static uintptr_t GetModuleBaseSize(const wchar_t* name, size_t& outSize);
+
+uintptr_t GetGameModuleBaseSize(size_t& outSize) {
+    return GetModuleBaseSize(L"HytaleClient.exe", outSize);
 }
 
 static uintptr_t GetModuleBaseSize(const wchar_t* name, size_t& outSize) {
@@ -164,6 +173,13 @@ static uintptr_t PatternScan(uintptr_t base, size_t size, const char* ida) {
     return 0;
 }
 
+uintptr_t GameModulePatternScan(const char* idaPattern) {
+    size_t size = 0;
+    const uintptr_t base = GetGameModuleBaseSize(size);
+    if (!base || !size) return 0;
+    return PatternScan(base, size, idaPattern);
+}
+
 // =============================================================================
 // System.String
 // =============================================================================
@@ -224,9 +240,11 @@ void* CreateSystemString(const std::string& utf8) {
         std::lock_guard lock(g_mtx);
         g_keepalive.push_back(mem);
         // Never erase: reuse/UAF of fake System.String is worse than a small leak.
-        // Cap growth softly by skipping further inserts if huge (should not happen).
-        if (g_keepalive.size() > KEEPALIVE_MAX * 2)
-            LogToFile("keepalive oversized: " + std::to_string(g_keepalive.size()));
+        // Note it in the log each time the count doubles past the soft cap -
+        // logging every insert past it used to write a line per message sent.
+        const size_t n = g_keepalive.size();
+        if (n > KEEPALIVE_MAX * 2 && (n & (n - 1)) == 0)
+            LogToFile("keepalive oversized: " + std::to_string(n));
     }
     return p;
 }
@@ -269,100 +287,130 @@ static void NoteChatObject(void* self) {
         g_sendDisabled.store(false);
 }
 
-static void __fastcall hkSendMessage(void* self, void* message) {
+// All three chat hooks run through hookthunk.hpp: our work happens first, then
+// the thunk JUMPS to the game's function. They used to call the original and
+// carry on afterwards, which left a C++ frame under the game's code - and every
+// crash dump of the game fail-fasting (0xC0000602) had hkOnReceive's return
+// address as the frame the garbage collector could not walk past.
+//
+// Bot messages are no longer sent from here as a rule. When the frame hook is
+// running on the chat thread it sends them in place of one frame's call (see
+// gamesdk.cpp), which leaves nothing of ours under the game's code at all. The
+// chat hooks only send as a fallback, on builds where that is not possible.
+static void FlushPendingFallback() {
+    if (!GsdkFrameCarriesChatSends())
+        ProcessPending();
+}
+
+static uintptr_t SendMessagePre(HookRegs* r) {
     HookGuard guard;
-    bool skipOriginal = false;
+    void* const self = (void*)r->rcx;
+    void* const message = (void*)r->rdx;
+    bool swallow = false;
     try {
-        if (g_shuttingDown.load()) {
-            if (oSendMessage) oSendMessage(self, message);
-            return;
-        }
+        if (!g_shuttingDown.load()) {
+            NoteChatObject(self);
+            g_gameThread.store(GetCurrentThreadId());
 
-        NoteChatObject(self);
-        g_gameThread.store(GetCurrentThreadId());
+            std::string text;
+            uint64_t vt = 0;
+            if (ReadSystemString(message, text, &vt) && vt) {
+                g_stringVT.store(vt);
+                g_chatReady.store(true);
 
-        std::string text;
-        uint64_t vt = 0;
-        if (ReadSystemString(message, text, &vt) && vt) {
-            g_stringVT.store(vt);
-            g_chatReady.store(true);
-
-            if (HandleOwnerCommand(text, false))
-                skipOriginal = true; // swallow owner commands
+                if (HandleOwnerCommand(text, false))
+                    swallow = true; // owner commands never reach the server
+            }
+            // Before the player's own message rather than after it, now that
+            // nothing may run once the game's function has been entered.
+            if (g_chatReady.load())
+                FlushPendingFallback();
         }
     }
     catch (...) { LogToFile("hkSendMessage exception"); }
 
-    // Deliver the player's message to the game immediately.
-    if (!skipOriginal && oSendMessage)
-        oSendMessage(self, message);
-
-    // Flush bot queue after the game has handled this send (still on game thread).
-    try {
-        if (!g_shuttingDown.load() && g_chatReady.load())
-            ProcessPending();
-    }
-    catch (...) { LogToFile("hkSendMessage ProcessPending exception"); }
+    if (swallow) return 0;
+    return (uintptr_t)oSendMessage;
 }
 
-static void __fastcall hkAddMessage(void* self, void* message) {
+static uintptr_t AddMessagePre(HookRegs* r) {
     HookGuard guard;
+    void* const self = (void*)r->rcx;
+    void* const message = (void*)r->rdx;
     try {
-        if (g_shuttingDown.load()) {
-            if (oAddMessage) oAddMessage(self, message);
-            return;
+        if (!g_shuttingDown.load()) {
+            NoteChatObject(self);
+            if (!g_gameThread.load())
+                g_gameThread.store(GetCurrentThreadId());
+
+            // Until the player types once on this chat instance, do nothing else.
+            if (g_chatReady.load()) {
+                // Reading the message before the game shows it rather than
+                // after: it is the same object either way, and after is no
+                // longer somewhere we can be.
+                if (message && IsPlausiblePtr(message))
+                    ProcessMessage(message);
+                FlushPendingFallback();
+            }
         }
-
-        // Game first — never block chat display / input on our work.
-        if (oAddMessage) oAddMessage(self, message);
-
-        if (g_shuttingDown.load()) return;
-
-        NoteChatObject(self);
-        if (!g_gameThread.load())
-            g_gameThread.store(GetCurrentThreadId());
-
-        // Until the player types once on this chat instance, do nothing else.
-        if (!g_chatReady.load())
-            return;
-
-        if (message && IsPlausiblePtr(message))
-            ProcessMessage(message);
-        ProcessPending();
     }
-    catch (...) {
-        LogToFile("hkAddMessage exception");
-        if (oAddMessage) oAddMessage(self, message);
-    }
+    catch (...) { LogToFile("hkAddMessage exception"); }
+    return (uintptr_t)oAddMessage;
 }
 
-static void __fastcall hkOnReceive(void* self, void* message) {
+std::atomic<uintptr_t> g_recvCallerRva{ 0 };
+std::atomic<uintptr_t> g_recvFuncRva{ 0 };
+
+static uintptr_t OnReceivePre(HookRegs* r) {
     HookGuard guard;
-    try {
-        if (g_shuttingDown.load()) {
-            if (oOnReceive) oOnReceive(self, message);
-            return;
+    void* const message = (void*)r->rdx;
+
+    // Where the client called us FROM. The inbound packet signature does not
+    // match this build, so there is no dispatcher to hook by pattern - but chat
+    // arrives over the network like everything else, so whoever calls this is
+    // standing on the inbound path. A return address is the one way to find a
+    // function when its bytes cannot be recognised.
+    if (!g_recvCallerRva.load()) {
+        const uintptr_t ret = (uintptr_t)r->ret;
+        size_t modSize = 0;
+        const uintptr_t base = GetGameModuleBaseSize(modSize);
+        if (base && ret > base && ret < base + modSize) {
+            g_recvCallerRva.store(ret - base);
+
+            // Walk back to the start of whatever function that is. Functions
+            // are aligned and preceded by padding, so the first run of int3 or
+            // nop above it marks the boundary.
+            uintptr_t at = ret;
+            for (size_t back = 0; back < 0x1000 && at > base + 16; ++back, --at) {
+                uint8_t b[2] = { 0, 0 };
+                if (!SafeRead((const void*)(at - 1), b, 2)) break;
+                if (b[0] != 0xCC && b[0] != 0x90) continue;
+                // Skip the padding itself and take what follows.
+                uintptr_t f = at;
+                while (f < ret) {
+                    uint8_t p = 0;
+                    if (!SafeRead((const void*)f, &p, 1)) break;
+                    if (p != 0xCC && p != 0x90) break;
+                    ++f;
+                }
+                if (f < ret) g_recvFuncRva.store(f - base);
+                break;
+            }
         }
+    }
 
-        // Original first — never treat OnReceive `self` as the chat object (different type).
-        if (oOnReceive) oOnReceive(self, message);
-
+    try {
+        // Never treat OnReceive `self` as the chat object (different type).
         // Network/join traffic must not drive our walker until the player has typed.
-        if (!g_chatReady.load())
-            return;
-
         const DWORD gt = g_gameThread.load();
-        if (!gt || GetCurrentThreadId() != gt)
-            return;
-
-        if (message && IsPlausiblePtr(message))
-            ProcessMessage(message);
-        ProcessPending();
+        if (!g_shuttingDown.load() && g_chatReady.load() && gt && GetCurrentThreadId() == gt) {
+            if (message && IsPlausiblePtr(message))
+                ProcessMessage(message);
+            FlushPendingFallback();
+        }
     }
-    catch (...) {
-        LogToFile("hkOnReceive exception");
-        if (oOnReceive) oOnReceive(self, message);
-    }
+    catch (...) { LogToFile("hkOnReceive exception"); }
+    return (uintptr_t)oOnReceive;
 }
 
 static LRESULT CALLBACK hkGameWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
@@ -373,16 +421,19 @@ static LRESULT CALLBACK hkGameWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     }
 
     if (m == WM_TIMER && w == JOSE_TIMER_ID) {
-        // Only flush bot queue when session is ready — never during server load.
+        // Only queues. This used to send the bot queue too, which called the
+        // game's managed SendMessage from inside a window message - where the
+        // thread is outside the runtime (the game is waiting in a native
+        // message pump), so a collection could run straight through our call
+        // and move objects out from under it. Sends happen from the hooks now.
         if (IsWindow(h) && g_chatReady.load()) {
             try {
                 Extras::TickReminders([](const std::string& text) {
                     QueueBotReply(text);
                     });
-                ProcessPending();
             }
             catch (...) {
-                LogToFile("WM_TIMER ProcessPending exception");
+                LogToFile("WM_TIMER reminder exception");
                 InvalidateChatSession("timer exception");
             }
         }
@@ -448,16 +499,24 @@ bool InstallChatHooks() {
         return false;
     }
 
-    if (MH_CreateHook((void*)send, &hkSendMessage, (void**)&oSendMessage) != MH_OK ||
+    static void* const sendThunk = MakePreHookThunk(&SendMessagePre);
+    static void* const addThunk = MakePreHookThunk(&AddMessagePre);
+    static void* const recvThunk = MakePreHookThunk(&OnReceivePre);
+    if (!sendThunk || !addThunk || !recvThunk) {
+        LogToFile("InstallChatHooks: could not allocate hook thunks");
+        return false;
+    }
+
+    if (MH_CreateHook((void*)send, sendThunk, (void**)&oSendMessage) != MH_OK ||
         MH_EnableHook((void*)send) != MH_OK)
         return false;
 
     if (add) {
-        MH_CreateHook((void*)add, &hkAddMessage, (void**)&oAddMessage);
+        MH_CreateHook((void*)add, addThunk, (void**)&oAddMessage);
         MH_EnableHook((void*)add);
     }
     if (recv) {
-        MH_CreateHook((void*)recv, &hkOnReceive, (void**)&oOnReceive);
+        MH_CreateHook((void*)recv, recvThunk, (void**)&oOnReceive);
         MH_EnableHook((void*)recv);
     }
     g_chatHooked = true;

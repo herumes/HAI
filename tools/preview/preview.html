@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prefab Preview</title>
+<style>
+  :root { color-scheme: dark; --bg:#12141a; --panel:#1a1d26; --panel2:#20242f; --line:#2b303d; --text:#e6e8ee; --dim:#8a90a2; --accent:#7fb2ff; --accent2:#33507f; }
+  * { box-sizing: border-box; }
+  html, body { height:100%; }
+  body { margin:0; background:var(--bg); color:var(--text); font:13.5px/1.4 system-ui, "Segoe UI", sans-serif; display:flex; overflow:hidden; }
+
+  #side { width:330px; flex:none; background:var(--panel); border-right:1px solid var(--line); overflow:auto; transition:margin-left .18s; }
+  body.noside #side { margin-left:-331px; }
+  #side header { padding:12px 14px 6px; }
+  h1 { font-size:15px; margin:0 0 2px; }
+  p { margin:0 0 8px; color:var(--dim); font-size:12px; }
+  details { border-top:1px solid var(--line); }
+  summary { cursor:pointer; padding:9px 14px; font-weight:600; font-size:12.5px; letter-spacing:.02em; list-style:none; user-select:none; }
+  summary::-webkit-details-marker { display:none; }
+  summary::before { content:'\25B8'; display:inline-block; width:14px; color:var(--dim); transition:transform .12s; }
+  details[open] > summary::before { transform:rotate(90deg); }
+  .sec { padding:0 14px 12px; }
+
+  button, input[type=file]::file-selector-button, select { background:#262b3a; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:5px 10px; cursor:pointer; font:inherit; }
+  select { padding:4px 6px; }
+  button:hover, select:hover { background:#2f3547; }
+  button.on { background:var(--accent2); border-color:#4a70b0; }
+  button:disabled { opacity:.4; cursor:default; }
+  .row { display:flex; gap:6px; flex-wrap:wrap; margin:7px 0; align-items:center; }
+  .row > label { margin:0; }
+  label { display:block; margin:9px 0 2px; font-size:12px; color:var(--dim); }
+  label.chk { display:flex; align-items:center; gap:6px; margin:5px 0; color:var(--text); font-size:13px; }
+  label.sl { display:grid; grid-template-columns:1fr auto; gap:0 8px; }
+  label.sl b { color:var(--text); font-weight:500; font-variant-numeric:tabular-nums; }
+  label.sl input { grid-column:1 / 3; }
+  input[type=range] { width:100%; accent-color:#6f9be0; margin:2px 0; }
+  input[type=text] { width:100%; background:#14161d; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:5px 8px; font:inherit; }
+  .pair { display:grid; grid-template-columns:22px 1fr 1fr; gap:4px 8px; align-items:center; font-size:12px; color:var(--dim); }
+  #drop { border:1px dashed var(--line); border-radius:8px; padding:9px; text-align:center; color:var(--dim); margin:6px 0; font-size:12px; }
+  #drop.over { border-color:var(--accent); color:var(--text); }
+  #info { font-size:12.5px; color:var(--dim); margin:8px 0; white-space:pre-line; }
+  #sel { font-size:12.5px; background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin:8px 0; display:none; }
+  #sel .name { color:var(--text); font-weight:600; word-break:break-all; }
+  #sel .dim { color:var(--dim); }
+  #mats { margin-top:6px; max-height:46vh; overflow:auto; }
+  #mats div.m { display:flex; align-items:center; gap:8px; padding:2px 4px; font-size:12px; border-radius:4px; cursor:pointer; }
+  #mats div.m:hover { background:#262b3a; }
+  #mats div.m.off { opacity:.35; }
+  #mats canvas { width:20px; height:20px; flex:none; image-rendering:pixelated; border:1px solid #0008; border-radius:3px; }
+  #mats .n { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #mats .c { color:var(--dim); font-variant-numeric:tabular-nums; }
+
+  #stage { flex:1; position:relative; min-width:0; background:#5d86c9; overflow:hidden; }
+  #c { width:100%; height:100%; display:block; touch-action:none; outline:none; }
+  #c.orbit { cursor:grab; } #c.orbit.dragging { cursor:grabbing; }
+  #c.look { cursor:crosshair; }
+  #map { position:absolute; inset:0; width:100%; height:100%; display:none; cursor:crosshair; background:#14161c; }
+
+  #bar { position:absolute; top:10px; left:50%; transform:translateX(-50%); display:flex; gap:2px; background:#0c0e13d8; border:1px solid #ffffff18; border-radius:10px; padding:3px; backdrop-filter:blur(6px); z-index:5; }
+  #bar button { background:transparent; border:0; border-radius:7px; padding:6px 12px; color:#c9cfde; font-weight:500; }
+  #bar button:hover { background:#ffffff14; }
+  #bar button.on { background:var(--accent2); color:#fff; }
+  #bar kbd { opacity:.55; font:inherit; font-size:11px; margin-left:5px; }
+  #sidebtn { position:absolute; top:10px; left:10px; z-index:5; background:#0c0e13d8; border:1px solid #ffffff18; border-radius:8px; padding:6px 10px; color:#c9cfde; }
+  #compass { position:absolute; top:10px; right:10px; width:64px; height:64px; pointer-events:none; z-index:4; }
+  #hud { position:absolute; right:12px; bottom:10px; text-align:right; color:#fffc; font-size:12px; text-shadow:0 1px 3px #000c; pointer-events:none; line-height:1.5; font-variant-numeric:tabular-nums; }
+  #hint { position:absolute; left:12px; bottom:10px; color:#fffd; font-size:12px; text-shadow:0 1px 3px #000c; pointer-events:none; max-width:55%; }
+  #hint b { background:#0008; border-radius:4px; padding:0 5px; font-weight:500; }
+  #tip { position:absolute; left:50%; transform:translateX(-50%); bottom:44px; background:#000b; color:#fff; padding:5px 10px; border-radius:6px; font-size:12.5px; pointer-events:none; display:none; white-space:nowrap; z-index:4; }
+  #cross { position:absolute; left:50%; top:50%; width:18px; height:18px; margin:-9px 0 0 -9px; pointer-events:none; display:none; z-index:3; }
+  #cross::before, #cross::after { content:''; position:absolute; background:#fff; mix-blend-mode:difference; }
+  #cross::before { left:8px; top:0; width:2px; height:18px; } #cross::after { top:8px; left:0; height:2px; width:18px; }
+  #status { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; text-align:center; padding:30px; color:#123; font-size:15px; pointer-events:none; z-index:2; }
+  #toast { position:absolute; left:50%; top:56px; transform:translateX(-50%); background:#000c; color:#fff; padding:6px 14px; border-radius:8px; font-size:13px; pointer-events:none; opacity:0; transition:opacity .25s; z-index:6; }
+  #toast.show { opacity:1; }
+  #lock { position:absolute; left:50%; top:45%; transform:translate(-50%,-50%); background:#000c; color:#fff; padding:12px 20px; border-radius:10px; font-size:14px; display:none; pointer-events:none; z-index:4; text-align:center; }
+  #help { position:absolute; inset:0; background:#0009; display:none; align-items:center; justify-content:center; z-index:9; }
+  #help.show { display:flex; }
+  #help .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px 22px; max-width:760px; max-height:88vh; overflow:auto; }
+  #help h2 { margin:0 0 10px; font-size:16px; }
+  #help h3 { margin:12px 0 4px; font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--dim); }
+  #help table { border-collapse:collapse; width:100%; }
+  #help td { padding:3px 10px 3px 0; font-size:13px; vertical-align:top; }
+  #help td:first-child { white-space:nowrap; color:#fff; }
+  #help kbd { background:#2b3142; border:1px solid #3a4157; border-bottom-width:2px; border-radius:4px; padding:0 6px; font:inherit; font-size:12px; }
+  .cols { display:grid; grid-template-columns:1fr 1fr; gap:0 26px; }
+  @media (max-width:900px) { .cols { grid-template-columns:1fr; } #side { position:absolute; z-index:8; height:100%; } }
+</style>
+</head>
+<body>
+<div id="side">
+  <header>
+    <h1>Prefab Preview</h1>
+    <p>The build as it will look in the game: the game's own block shapes and textures.</p>
+  </header>
+
+  <details open><summary>Model</summary><div class="sec">
+    <div id="drop">Drop a prefab .json here<br><input type="file" id="file" accept=".json,application/json"></div>
+    <div id="info">no prefab loaded</div>
+    <div id="sel"></div>
+  </div></details>
+
+  <details open><summary>View</summary><div class="sec">
+    <div class="row">
+      <button data-view="south">Front</button><button data-view="north">Back</button>
+      <button data-view="east">East</button><button data-view="west">West</button>
+      <button data-view="top">Top</button><button data-view="iso">3/4</button>
+    </div>
+    <div class="row">
+      <button id="frame" title="F">Frame all</button>
+      <button id="ortho" title="Orthographic projection">Orthographic</button>
+      <button id="spin" title="R">Turntable</button>
+    </div>
+    <label class="sl">Field of view <b id="fovL">60</b><input type="range" id="fov" min="35" max="110" value="60"></label>
+    <label class="sl">Turntable speed <b id="spinL">12</b><input type="range" id="spinspeed" min="2" max="60" value="12"></label>
+  </div></details>
+
+  <details open><summary>Slice</summary><div class="sec">
+    <div class="pair"><span></span><span>from</span><span>to</span></div>
+    <div class="pair" id="slX"><span>X</span><input type="range" id="xmin"><input type="range" id="xmax"></div>
+    <div class="pair" id="slY"><span>Y</span><input type="range" id="ymin"><input type="range" id="ymax"></div>
+    <div class="pair" id="slZ"><span>Z</span><input type="range" id="zmin"><input type="range" id="zmax"></div>
+    <div id="sliceInfo" style="font-size:12px;color:var(--dim);margin:4px 0"></div>
+    <div class="row"><button id="layerup" title="]">Layer up</button><button id="layerdown" title="[">Layer down</button>
+      <label class="chk"><input type="checkbox" id="onlylayer"> only that layer</label></div>
+    <div class="row"><button id="sliceReset">Reset slice</button></div>
+  </div></details>
+
+  <details open><summary>Look</summary><div class="sec">
+    <label>Sky</label>
+    <select id="sky"><option value="time">Time of day</option><option value="studio">Studio</option><option value="white">White</option><option value="dark">Dark</option><option value="clear">Transparent</option></select>
+    <label class="sl">Time of day <b id="timeL">14:00</b><input type="range" id="time" min="0" max="24" step="0.1" value="14"></label>
+    <label class="sl">Haze <b id="hazeL">30</b><input type="range" id="haze" min="0" max="100" value="30"></label>
+    <label>Ground</label>
+    <select id="ground"><option value="grass">Grass</option><option value="grey">Grey</option><option value="none">None</option></select>
+    <label class="chk"><input type="checkbox" id="ao" checked> soft shadows in corners</label>
+    <label class="chk"><input type="checkbox" id="grid"> block grid on the ground</label>
+    <label class="chk"><input type="checkbox" id="bounds"> bounding box</label>
+    <label class="chk"><input type="checkbox" id="outline" checked> outline the block under the pointer</label>
+  </div></details>
+
+  <details><summary>Moving around</summary><div class="sec">
+    <label class="sl">Fly speed <b id="flyL">14</b><input type="range" id="flyspeed" min="2" max="120" value="14"></label>
+    <label class="sl">Mouse sensitivity <b id="sensL">100</b><input type="range" id="sens" min="20" max="300" value="100"></label>
+    <label class="chk"><input type="checkbox" id="flycollide"> free-fly stops at blocks</label>
+    <label class="chk"><input type="checkbox" id="invy"> invert mouse Y</label>
+    <div class="row"><button id="helpbtn">All controls (H)</button></div>
+  </div></details>
+
+  <details><summary>Tools</summary><div class="sec">
+    <div class="row"><button id="measure" title="M">Measure</button><button id="copymats">Copy material list</button><button id="savemats">Save list</button></div>
+    <div id="measureOut" style="font-size:12.5px;color:var(--dim);margin:4px 0"></div>
+    <div class="row">
+      <button id="shot" title="P">Save picture</button>
+      <select id="shotscale"><option value="1">normal</option><option value="2">2x sharper</option><option value="3">3x sharper</option></select>
+      <label class="chk"><input type="checkbox" id="shotclear"> transparent</label>
+    </div>
+    <div class="row"><button id="rec">Record turntable video</button></div>
+  </div></details>
+
+  <details open><summary>Materials</summary><div class="sec">
+    <div class="row"><button id="showall">Show all</button><span style="color:var(--dim);font-size:12px">click hides, double-click isolates</span></div>
+    <input type="text" id="filter" placeholder="filter...">
+    <div id="mats"></div>
+  </div></details>
+</div>
+
+<div id="stage">
+  <canvas id="c" tabindex="0"></canvas>
+  <canvas id="map"></canvas>
+  <button id="sidebtn" title="Tab">&#9776;</button>
+  <div id="bar">
+    <button data-mode="orbit">Orbit<kbd>1</kbd></button>
+    <button data-mode="fly">Free fly<kbd>2</kbd></button>
+    <button data-mode="walk">Walk<kbd>3</kbd></button>
+    <button data-mode="map">Layer map<kbd>4</kbd></button>
+    <button id="helptop">?</button>
+  </div>
+  <canvas id="compass" width="128" height="128"></canvas>
+  <div id="cross"></div>
+  <div id="tip"></div>
+  <div id="hint"></div>
+  <div id="hud"></div>
+  <div id="lock">Click to look around<br><span style="opacity:.7;font-size:12px">Esc lets go of the mouse</span></div>
+  <div id="toast"></div>
+  <div id="status">Loading...</div>
+  <div id="help"><div class="card">
+    <h2>Controls</h2>
+    <div class="cols"><div>
+      <h3>Everywhere</h3>
+      <table>
+        <tr><td><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd> <kbd>4</kbd></td><td>Orbit, free fly, walk, layer map</td></tr>
+        <tr><td><kbd>Tab</kbd></td><td>Show or hide the side panel</td></tr>
+        <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>Cut one layer lower or higher (Page Down / Up too)</td></tr>
+        <tr><td><kbd>M</kbd></td><td>Measure: click two blocks</td></tr>
+        <tr><td><kbd>P</kbd></td><td>Save a picture</td></tr>
+        <tr><td><kbd>G</kbd> <kbd>B</kbd></td><td>Grid on the ground, bounding box</td></tr>
+        <tr><td>click</td><td>Select the block under the pointer</td></tr>
+        <tr><td><kbd>Esc</kbd></td><td>Let go of the mouse, clear selection</td></tr>
+      </table>
+      <h3>Orbit</h3>
+      <table>
+        <tr><td>drag</td><td>Turn around the build</td></tr>
+        <tr><td>right drag / <kbd>Shift</kbd> drag</td><td>Slide the view</td></tr>
+        <tr><td>wheel</td><td>Zoom</td></tr>
+        <tr><td>double-click</td><td>Centre on that block</td></tr>
+        <tr><td><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> <kbd>Q</kbd><kbd>E</kbd></td><td>Slide, down and up</td></tr>
+        <tr><td><kbd>F</kbd> / <kbd>R</kbd></td><td>Frame everything / turntable</td></tr>
+      </table>
+    </div><div>
+      <h3>Free fly (like the game's camera)</h3>
+      <table>
+        <tr><td>click, then mouse</td><td>Look around</td></tr>
+        <tr><td><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></td><td>Move</td></tr>
+        <tr><td><kbd>Space</kbd></td><td>Up</td></tr>
+        <tr><td><kbd>Ctrl</kbd> or <kbd>C</kbd></td><td>Down (<kbd>Ctrl</kbd>+<kbd>W</kbd> closes the tab: use <kbd>C</kbd> while moving)</td></tr>
+        <tr><td><kbd>Shift</kbd></td><td>Go faster</td></tr>
+        <tr><td>wheel</td><td>Change the flying speed</td></tr>
+      </table>
+      <h3>Walk</h3>
+      <table>
+        <tr><td><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></td><td>Walk (low steps and stairs are climbed by themselves)</td></tr>
+        <tr><td><kbd>Space</kbd></td><td>Jump</td></tr>
+        <tr><td><kbd>Ctrl</kbd> or <kbd>C</kbd></td><td>Crouch</td></tr>
+        <tr><td><kbd>Shift</kbd></td><td>Sprint</td></tr>
+        <tr><td><kbd>R</kbd></td><td>Back to the start</td></tr>
+        <tr><td><kbd>V</kbd></td><td>Turn fly on or off while walking</td></tr>
+      </table>
+      <h3>Layer map</h3>
+      <table>
+        <tr><td>drag, wheel</td><td>Slide, zoom</td></tr>
+        <tr><td><kbd>[</kbd> <kbd>]</kbd></td><td>Previous / next layer</td></tr>
+        <tr><td><kbd>Home</kbd></td><td>Fit to the window</td></tr>
+      </table>
+    </div></div>
+    <div style="margin-top:12px;text-align:right"><button id="helpclose">Close</button></div>
+  </div></div>
+</div>
+
+<script src="mesher.js"></script>
+<script src="collide.js"></script>
+<script src="pack.js" onerror="window.HYPACK_MISSING=true"></script>
+<script src="prefab.js" onerror="window.HYPREFAB_MISSING=true"></script>
+<script src="viewer.js"></script>
+</body>
+</html>

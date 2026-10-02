@@ -34,6 +34,8 @@ whitelist_users.txt
 hitbot_*.txt
 josebot_*.txt
 bot_settings.txt
+auto_replies.txt
+chatlogs/
 *.log
 
 # Temporary / local
@@ -51,3 +53,20 @@ items_compact.json
 mobs_compact.json
 
 backup-old/
+
+# Generated from the game files on your machine; never committed.
+tools/preview/pack.js
+tools/preview/prefab.js
+
+# generated race-world script and preview images
+tools/racemap/out/
+tools/racemap/__pycache__/
+
+# the race server mod's models and pictures (not ours to publish)
+tools/race_blocks/*.zip
+tools/server_mods/*.zip
+
+# raw captured packets and big generated outputs
+quicdump/
+tools/racemap3/out/
+tools/racemap/out/

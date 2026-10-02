@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -20,32 +20,84 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ai.hpp" />
+    <ClInclude Include="aiflow.hpp" />
+    <ClInclude Include="aicontext.hpp" />
+    <ClInclude Include="aiprompt.hpp" />
+    <ClInclude Include="aitext.hpp" />
+    <ClInclude Include="aitools.hpp" />
+    <ClInclude Include="aicalc.hpp" />
+    <ClInclude Include="autoreply.hpp" />
+    <ClInclude Include="buildsession.hpp" />
+    <ClInclude Include="buildscript.hpp" />
     <ClInclude Include="chat.hpp" />
+    <ClInclude Include="chatprefix.hpp" />
+    <ClInclude Include="chatview.hpp" />
     <ClInclude Include="common.hpp" />
+    <ClInclude Include="debugshape.hpp" />
     <ClInclude Include="extras.hpp" />
+    <ClInclude Include="autofarm.hpp" />
+    <ClInclude Include="farmroute.hpp" />
+    <ClInclude Include="gamesdk.hpp" />
     <ClInclude Include="hooks.hpp" />
+    <ClInclude Include="hookthunk.hpp" />
     <ClInclude Include="knowledge.hpp" />
+    <ClInclude Include="packets.hpp" />
+    <ClInclude Include="placewatch.hpp" />
+    <ClInclude Include="prefab.hpp" />
     <ClInclude Include="pch.h" />
+    <ClInclude Include="position.hpp" />
+    <ClInclude Include="selection.hpp" />
     <ClInclude Include="settings.hpp" />
     <ClInclude Include="shared.hpp" />
     <ClInclude Include="translate.hpp" />
     <ClInclude Include="ui.hpp" />
+    <ClInclude Include="worldread.hpp" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ai.cpp" />
+    <ClCompile Include="aiflow.cpp" />
+    <ClCompile Include="aicontext.cpp" />
+    <ClCompile Include="aiprompt.cpp" />
+    <ClCompile Include="aitext.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="aitools.cpp" />
+    <ClCompile Include="aicalc.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="autoreply.cpp" />
+    <ClCompile Include="buildsession.cpp" />
+    <ClCompile Include="buildscript.cpp" />
     <ClCompile Include="chat_core.cpp" />
+    <ClCompile Include="chatprefix.cpp" />
+    <ClCompile Include="chatview.cpp" />
     <ClCompile Include="common.cpp" />
     <ClCompile Include="dllmain.cpp" />
+    <ClCompile Include="debugshape.cpp" />
     <ClCompile Include="extras.cpp" />
+    <ClCompile Include="farmroute.cpp" />
+    <ClCompile Include="autofarm.cpp" />
+    <ClCompile Include="gamesdk.cpp" />
     <ClCompile Include="hooks.cpp" />
+    <ClCompile Include="hookthunk.cpp" />
     <ClCompile Include="knowledge.cpp" />
     <ClCompile Include="legacy_core.cpp" />
+    <ClCompile Include="packets.cpp" />
+    <ClCompile Include="placewatch.cpp" />
+    <ClCompile Include="prefab.cpp" />
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="position.cpp" />
+    <ClCompile Include="selection.cpp" />
     <ClCompile Include="settings.cpp" />
     <ClCompile Include="translate.cpp" />
     <ClCompile Include="ui.cpp" />
+    <ClCompile Include="ui_settings.cpp" />
+    <ClCompile Include="ui_farm.cpp" />
+    <ClCompile Include="ui_aistudio.cpp" />
+    <ClCompile Include="ui_aiprefab.cpp" />
+    <ClCompile Include="worldread.cpp" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>18.0</VCProjectVersion>

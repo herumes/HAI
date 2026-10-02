@@ -3,11 +3,15 @@
 #include "common.hpp"
 #include "settings.hpp"
 #include "ai.hpp"
+#include "aiflow.hpp"
+#include "aiprompt.hpp"
+#include "aitext.hpp"
 #include "extras.hpp"
 #include "knowledge.hpp"
 #include "translate.hpp"
 #include "hooks.hpp"
 #include "shared.hpp"
+#include "autoreply.hpp"
 
 #ifndef WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2
 #define WINHTTP_FLAG_SECURE_PROTOCOL_TLS1_2 0x00000800
@@ -344,8 +348,23 @@ static void AddTextSegments(std::vector<ChatSeg>& segs, const std::string& text,
     }
 }
 
+std::atomic<uint64_t> g_logVersion{ 1 };
+
+static long long UnixNowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
 static uint64_t PushLine(ChatLine line) {
     if (line.plain.empty()) return 0;
+
+    int cap = 400;
+    {
+        std::lock_guard slock(g_settingsMtx);
+        cap = g_prefs.maxLogLines;
+    }
+    if (cap < 100) cap = 100;
+
     std::lock_guard lock(g_mtx);
 
     if (!g_log.empty() &&
@@ -358,19 +377,82 @@ static uint64_t PushLine(ChatLine line) {
         line.id = ++g_nextLineId;
     if (line.timeStr.empty())
         line.timeStr = NowHHMM();
+    if (line.unixMs == 0)
+        line.unixMs = UnixNowMs();
 
     uint64_t id = line.id;
     g_log.push_back(std::move(line));
-    if (g_log.size() > 400)
-        g_log.erase(g_log.begin(), g_log.begin() + (g_log.size() - 400));
+    if (g_log.size() > (size_t)cap)
+        g_log.erase(g_log.begin(), g_log.begin() + (g_log.size() - (size_t)cap));
     g_scroll = true;
+    g_logVersion.fetch_add(1);
     return id;
+}
+
+bool SnapshotChatLog(std::vector<ChatLine>& cache, uint64_t& seenVersion) {
+    const uint64_t v = g_logVersion.load();
+    if (v == seenVersion) return false;
+
+    std::lock_guard lock(g_mtx);
+    seenVersion = g_logVersion.load();
+
+    // Both sides are sorted by id (ids only grow, and the log only loses lines
+    // at the front or all at once), so one merge pass pairs them up. Unchanged
+    // lines are moved over; only new or edited ones are copied.
+    std::vector<ChatLine> out;
+    out.reserve(g_log.size());
+    size_t j = 0;
+    for (const ChatLine& src : g_log) {
+        while (j < cache.size() && cache[j].id < src.id) ++j;
+        if (j < cache.size() && cache[j].id == src.id && cache[j].rev == src.rev)
+            out.push_back(std::move(cache[j++]));
+        else
+            out.push_back(src);
+    }
+    cache.swap(out);
+    return true;
+}
+
+void CollectNewChatLines(uint64_t& lastId, std::vector<ChatLine>& out) {
+    std::lock_guard lock(g_mtx);
+    // Walk back from the end; new lines are always at the back.
+    size_t first = g_log.size();
+    while (first > 0 && g_log[first - 1].id > lastId) --first;
+    for (size_t i = first; i < g_log.size(); ++i)
+        out.push_back(g_log[i]);
+    if (!g_log.empty() && g_log.back().id > lastId)
+        lastId = g_log.back().id;
+}
+
+void ClearChatLog() {
+    std::lock_guard lock(g_mtx);
+    g_log.clear();
+    g_logVersion.fetch_add(1);
+}
+
+void TouchChatLine(ChatLine& line) {
+    ++line.rev;
+    g_logVersion.fetch_add(1);
+}
+
+void PushLocalNote(const std::string& text, ImVec4 color) {
+    ChatLine note;
+    note.plain = text;
+    note.segs.push_back({ text, color });
+    note.outgoing = true;
+    note.local = true;
+    PushLine(std::move(note));
 }
 
 void QueueSend(PendingSend ps) {
     if (ps.gameText.empty()) return;
-    if (ps.gameText.size() > HYTALE_CHAT_MAX)
-        ps.gameText.resize(HYTALE_CHAT_MAX);
+    if (ps.gameText.size() > HYTALE_CHAT_MAX) {
+        // Back up to a character boundary; cutting inside a UTF-8 sequence
+        // used to put a replacement box at the end of long non-English lines.
+        size_t cut = HYTALE_CHAT_MAX;
+        while (cut > 0 && ((unsigned char)ps.gameText[cut] & 0xC0) == 0x80) --cut;
+        ps.gameText.resize(cut);
+    }
     std::lock_guard lock(g_mtx);
     g_pending.push_back(std::move(ps));
 }
@@ -448,15 +530,39 @@ static const std::unordered_map<std::string, char> kMorseTable = {
 };
 
 static std::string DecodeMorse(const std::string& raw) {
+    // Servers dress Morse up with typographic characters. Map the UTF-8 forms
+    // back to dot / dash / space before decoding; a byte-at-a-time check used
+    // to turn a no-break space (C2 A0) into a dot and drop en/em dashes.
+    struct Sub { const char* from; char to; };
+    static const Sub kSubs[] = {
+        { "\xC2\xB7", '.' },      // middle dot
+        { "\xE2\x80\xA2", '.' },  // bullet
+        { "\xE2\x8B\x85", '.' },  // dot operator
+        { "\xE2\x88\x99", '.' },  // bullet operator
+        { "\xE2\x80\x93", '-' },  // en dash
+        { "\xE2\x80\x94", '-' },  // em dash
+        { "\xE2\x88\x92", '-' },  // minus sign
+        { "\xE2\x80\x90", '-' },  // hyphen
+        { "\xC2\xA0", ' ' },      // no-break space
+    };
     std::string cleaned;
     cleaned.reserve(raw.size());
-    for (unsigned char c : raw) {
+    for (size_t i = 0; i < raw.size();) {
+        bool matched = false;
+        for (const Sub& s : kSubs) {
+            const size_t n = strlen(s.from);
+            if (raw.compare(i, n, s.from) == 0) {
+                cleaned += s.to;
+                i += n;
+                matched = true;
+                break;
+            }
+        }
+        if (matched) continue;
+        const unsigned char c = (unsigned char)raw[i++];
         if (c == '.' || c == '-') cleaned += (char)c;
-        else if (c == 0xC2 && false) {} // ignore
-        else if (c == 0xB7 || c == 0xA0) cleaned += '.'; // · or nbsp variants
-        else if (c == '-' || c == 0x96 || c == 0x97 || c == 0x2013 || c == 0x2014) cleaned += '-';
-        else if (c == ' ' || c == '/' || c == '|') cleaned += ' ';
-        else if (std::isspace(c)) cleaned += ' ';
+        else if (c == '_') cleaned += '-';
+        else if (c == ' ' || c == '/' || c == '|' || std::isspace(c)) cleaned += ' ';
     }
 
     std::string result;
@@ -671,16 +777,10 @@ static bool ExtractPatternNumbers(const std::string& text, std::vector<long long
 
     for (size_t i = 0; i < slice.size(); ++i) {
         unsigned char c = (unsigned char)slice[i];
-        if (std::isdigit(c) || (c == '-' && token.empty())) {
+        if (std::isdigit(c) || (c == '-' && token.empty()))
             token += (char)c;
-        }
-        else if (c == '?' || c == '…' || c == '.') {
-            // ignore trailing ? / ellipsis; do not treat as number separator mid-token
+        else
             flush();
-        }
-        else {
-            flush();
-        }
     }
     flush();
     return nums.size() >= 3;
@@ -911,23 +1011,23 @@ bool IsBotIdentity(const std::string& name) {
     }
     const std::string s = ToLower(NormalizeSpeaker(name));
     if (!bot.empty() && s.find(bot) != std::string::npos) return true;
-    if (s.find("josebot") != std::string::npos) return true;
+    if (s.find("hyai") != std::string::npos) return true;
     return false;
 }
 
 bool LooksLikeBotLine(const std::string& speaker, const std::string& body, const std::string& plain) {
     if (IsBotIdentity(speaker))
         return true;
-    if (StartsWithCI(body, "Josebot > ") || StartsWithCI(body, "JOSEBOT: ") ||
-        StartsWithCI(body, "josebot > ") || StartsWithCI(body, "josebot: "))
+    if (StartsWithCI(body, "HyAI > ") || StartsWithCI(body, "HYAI: ") ||
+        StartsWithCI(body, "hyai > ") || StartsWithCI(body, "hyai: "))
         return true;
 
     const std::string cleaned = TrimCopy(StripMcFormatting(plain));
     const std::string cleanedLower = ToLower(cleaned);
-    if (cleanedLower.find("[josebot]") != std::string::npos)
+    if (cleanedLower.find("[hyai]") != std::string::npos)
         return true;
-    if (StartsWithCI(cleaned, "josebot >") || StartsWithCI(cleaned, "josebot:") ||
-        StartsWithCI(cleaned, "josebot »") || StartsWithCI(cleaned, "[josebot]"))
+    if (StartsWithCI(cleaned, "hyai >") || StartsWithCI(cleaned, "hyai:") ||
+        StartsWithCI(cleaned, "hyai »") || StartsWithCI(cleaned, "[hyai]"))
         return true;
 
     if (!cleaned.empty() && cleaned[0] == '[') {
@@ -1003,7 +1103,7 @@ static bool IsUserIgnored(const std::string& speaker, const std::string& plainTe
 
 bool IsReservedSpeakerName(const std::string& key) {
     static const char* kDeny[] = {
-        "server", "console", "system", "josebot", "josebot_", "jose-bot", "jose_bot",
+        "server", "console", "system", "hyai", "hyai_", "hyai-bot", "hyai_bot",
         "announcement", "announce", "notify", "notification", "news", "broadcast",
         "admin", "administrator", "notif", "info", "warn", "warning", "event",
         "lobby", "proxy", "velocity", "bungee", "paper", "spigot", "unknown",
@@ -1107,6 +1207,8 @@ static void RememberGlobalChat(const std::string& speaker, const std::string& bo
     e.body = body.empty() ? plain : body;
     e.plain = plain;
     e.fromBot = fromBot;
+    e.unixMs = UnixNowMs();
+    static uint64_t s_nextCtxId = 0;
 
     int cap = 20;
     {
@@ -1122,6 +1224,7 @@ static void RememberGlobalChat(const std::string& speaker, const std::string& bo
         if (last.plain == e.plain || (last.speaker == e.speaker && last.body == e.body))
             return;
     }
+    e.id = ++s_nextCtxId;      // under g_mtx
     g_globalChat.push_back(std::move(e));
     while ((int)g_globalChat.size() > cap)
         g_globalChat.pop_front();
@@ -1234,12 +1337,12 @@ bool TryDecryptPrivateInBody(const std::string& messageBody, std::string& plainO
     plainOut.clear();
     if (messageBody.empty()) return false;
 
-    size_t p = messageBody.find("~jb1.");
+    size_t p = messageBody.find("~hy1.");
     if (p == std::string::npos) return false;
 
     // After the prefix keep only valid Base64URL chars (A-Za-z0-9-_)
     size_t start = p;
-    size_t end = start + 5; // past "~jb1."
+    size_t end = start + 5; // past "~hy1."
     while (end < messageBody.size()) {
         unsigned char c = (unsigned char)messageBody[end];
         if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
@@ -1252,7 +1355,7 @@ bool TryDecryptPrivateInBody(const std::string& messageBody, std::string& plainO
     }
     std::string token = messageBody.substr(start, end - start);
     if (!Extras::IsPrivateCiphertext(token)) {
-        LogToFile("PrivateDecrypt: found ~jb1. but cleaned token invalid, len=" +
+        LogToFile("PrivateDecrypt: found ~hy1. but cleaned token invalid, len=" +
             std::to_string(token.size()) + " tok=" + token.substr(0, 28));
         return false;
     }
@@ -1285,7 +1388,7 @@ static bool MatchOwnerCmdPrefix(const std::string& text, std::string& restOut, s
         wake2 = TrimCopy(g_wakeWord2);
         bot = TrimCopy(g_botName);
     }
-    if (wake.empty()) wake = "josebot";
+    if (wake.empty()) wake = "hyai";
 
     // Candidates: configured wake words + bot name + legacy josebot.
     std::string candidates[4];
@@ -1300,7 +1403,7 @@ static bool MatchOwnerCmdPrefix(const std::string& text, std::string& restOut, s
     addPrefix(wake);
     addPrefix(wake2);
     addPrefix(bot);
-    addPrefix("josebot"); // always accept legacy prefix too
+    addPrefix("hyai"); // always accept legacy prefix too
 
     // Prefer the longest matching prefix.
     const std::string lower = ToLower(t);
@@ -1344,20 +1447,14 @@ bool HandleOwnerCommand(const std::string& rawText, bool fromChatLine) {
     std::string tagName;
     {
         std::lock_guard lock(g_settingsMtx);
-        tagName = g_botName.empty() ? "Josebot" : g_botName;
+        tagName = g_botName.empty() ? "HyAI" : g_botName;
     }
     const std::string tag = "[" + tagName + "] ";
 
-    auto pushConf = [](const std::string& msg, ImVec4 col) {
-        ChatLine conf;
-        conf.plain = msg;
-        conf.segs.push_back({ conf.plain, col });
-        conf.outgoing = true;
-        PushLine(std::move(conf));
-        };
+    auto pushConf = [](const std::string& msg, ImVec4 col) { PushLocalNote(msg, col); };
 
     if (rest.empty() || restLower == "help") {
-        pushConf(tag + "ignore/unignore/ignorelist/whitelist/clearmemory/reloadprompt/live/color/nick/think/mute/sendlang/echo/context/reminders/cancelrem/privkey/privsend",
+        pushConf(tag + "ignore/unignore/ignorelist/whitelist/clearmemory/reloadprompt/live/color/nick/think/mute/sendlang/echo/context/reminders/cancelrem/privkey/privsend/approve/discard/retry/mode/preset/presets",
             ImVec4(0.7f, 0.85f, 1.0f, 1.0f));
         return true;
     }
@@ -1420,6 +1517,69 @@ bool HandleOwnerCommand(const std::string& rawText, bool fromChatLine) {
         pushConf(tag + "AI cancelled + queue cleared", ImVec4(1.0f, 0.55f, 0.45f, 1.0f));
         return true;
     }
+    else if (restLower == "approve" || restLower == "send" || restLower == "yes") {
+        pushConf(tag + (AiFlow::ApproveOldest() ? "approved" : "nothing is waiting for approval"),
+            ImVec4(0.45f, 1.0f, 0.55f, 1.0f));
+        return true;
+    }
+    else if (restLower == "discard" || restLower == "drop" || restLower == "no" || restLower == "skip") {
+        pushConf(tag + (AiFlow::DiscardOldest() ? "discarded" : "nothing is waiting for approval"),
+            ImVec4(1.0f, 0.6f, 0.4f, 1.0f));
+        return true;
+    }
+    else if (restLower == "retry" || restLower == "again") {
+        pushConf(tag + (AiFlow::RetryNewest() ? "asking again" : "nothing to retry"), ImVec4(0.7f, 0.85f, 1.0f, 1.0f));
+        return true;
+    }
+    else if (restLower == "mode" || StartsWithCI(rest, "mode ")) {
+        static const char* names[] = { "auto (replies go out by themselves)", "ask (drafts wait for your OK)", "dry (never sends, just drafts)" };
+        const std::string arg = restLower.size() > 5 ? TrimCopy(restLower.substr(5)) : std::string();
+        int mode = -1;
+        if (arg == "auto" || arg == "0" || arg == "on") mode = 0;
+        else if (arg == "ask" || arg == "review" || arg == "1") mode = 1;
+        else if (arg == "dry" || arg == "off" || arg == "2" || arg == "log") mode = 2;
+        {
+            std::lock_guard lock(g_settingsMtx);
+            if (mode >= 0) { g_prefs.aiReplyMode = mode; MarkPrefsChanged(); }
+            else mode = g_prefs.aiReplyMode;
+        }
+        pushConf(tag + "AI mode: " + names[mode] + (arg.empty() ? "   (mode auto | ask | dry)" : ""), ImVec4(0.85f, 0.75f, 1.0f, 1.0f));
+        return true;
+    }
+    else if (restLower == "presets") {
+        std::string list;
+        for (const auto& it : AiPrompt::Items()) {
+            if (!list.empty()) list += ", ";
+            list += (it.enabled ? "+" : "-") + it.name;
+        }
+        pushConf(tag + "prompt presets: " + list + "   (preset <name> [on|off])", ImVec4(0.85f, 0.75f, 1.0f, 1.0f));
+        return true;
+    }
+    else if (StartsWithCI(rest, "preset ")) {
+        std::string arg = TrimCopy(rest.substr(7));
+        int force = -1;                                   // trailing "on" / "off"
+        const std::string la = ToLower(arg);
+        if (la.size() > 3 && la.compare(la.size() - 3, 3, " on") == 0) { force = 1; arg = TrimCopy(arg.substr(0, arg.size() - 3)); }
+        else if (la.size() > 4 && la.compare(la.size() - 4, 4, " off") == 0) { force = 0; arg = TrimCopy(arg.substr(0, arg.size() - 4)); }
+        const std::string want = ToLower(arg);
+        const AiPrompt::Item* hit = nullptr;
+        const auto items = AiPrompt::Items();
+        for (const auto& it : items) if (ToLower(it.name) == want) hit = &it;
+        if (!hit) {                                       // a unique partial name is enough
+            int n = 0;
+            for (const auto& it : items) if (ToLower(it.name).find(want) != std::string::npos) { hit = &it; ++n; }
+            if (n != 1) hit = nullptr;
+        }
+        if (!hit) {
+            pushConf(tag + "no single preset matches \"" + arg + "\" (see: presets)", ImVec4(1.0f, 0.6f, 0.4f, 1.0f));
+        }
+        else {
+            const bool on = force < 0 ? !hit->enabled : force == 1;
+            AiPrompt::SetEnabled(hit->name, on);
+            pushConf(tag + "preset " + hit->name + (on ? " on" : " off"), ImVec4(0.85f, 0.75f, 1.0f, 1.0f));
+        }
+        return true;
+    }
     else if (restLower == "reloadprompt" || restLower == "reload" || restLower == "reloadcontext") {
         ReloadSystemPrompt(true);
         std::string status;
@@ -1462,7 +1622,7 @@ bool HandleOwnerCommand(const std::string& rawText, bool fromChatLine) {
             newState = g_useNickname;
         }
         SaveSettings();
-        pushConf(tag + "nickname " + (newState ? "on (/nickname &cJOSEBOT)" : "off"),
+        pushConf(tag + "nickname " + (newState ? "on (/nickname &cHYAI)" : "off"),
             ImVec4(1.00f, 0.45f, 0.45f, 1.0f));
         return true;
     }
@@ -1553,7 +1713,7 @@ bool HandleOwnerCommand(const std::string& rawText, bool fromChatLine) {
         std::string dump = Extras::BuildAiContextDump();
         LogToFile(dump);
         {
-            std::ofstream f("C:\\temp\\josebot_context_dump.txt", std::ios::trunc);
+            std::ofstream f("C:\\temp\\hyai_context_dump.txt", std::ios::trunc);
             if (f.is_open()) f << dump;
         }
         // Also show a short summary in overlay
@@ -1563,7 +1723,7 @@ bool HandleOwnerCommand(const std::string& rawText, bool fromChatLine) {
             memN = g_memory.size();
             chatN = g_globalChat.size();
         }
-        pushConf(tag + "context dump written to C:\\temp\\josebot_context_dump.txt ("
+        pushConf(tag + "context dump written to C:\\temp\\hyai_context_dump.txt ("
             + std::to_string(dump.size()) + " chars, memory msgs=" + std::to_string(memN)
             + ", global=" + std::to_string(chatN) + ")",
             ImVec4(0.70f, 0.85f, 1.00f, 1.0f));
@@ -1723,10 +1883,10 @@ void QueueBotReply(const std::string& rawText) {
         nickDelay = g_nicknameDelayMs;
     }
     if (colorCode.empty()) colorCode = "&a";
-    if (tagPrefix.empty()) tagPrefix = "Josebot > ";
-    if (nickOn.empty()) nickOn = "/nickname &cJOSEBOT";
+    if (tagPrefix.empty()) tagPrefix = "HyAI > ";
+    if (nickOn.empty()) nickOn = "/nickname &cHYAI";
     if (nickOff.empty()) nickOff = "/nickname off";
-    if (botName.empty()) botName = "Josebot";
+    if (botName.empty()) botName = "HyAI";
     if (nickDelay < 0) nickDelay = 0;
     if (nickDelay > 2000) nickDelay = 2000;
 
@@ -1797,64 +1957,12 @@ void QueueBotReply(const std::string& rawText) {
     }
 }
 
-static void AiWorkerMain(const std::string& userPrompt) {
-    WorkerGuard alive;
-    struct ClearFlag {
-        ~ClearFlag() { g_aiInProgress = false; }
-    } clearFlag;
-
-    try {
-        std::string aiResponse;
-        bool ok = OllamaProvider::GetResponse(userPrompt, aiResponse);
-
-        if (g_shuttingDown.load() || AI::IsCancelRequested()) {
-            LogToFile("AiWorkerMain: cancelled or shutting down — no reply");
-            return;
-        }
-
-        if (ok && !aiResponse.empty()) {
-            std::string cleaned = aiResponse;
-            std::string oneLine;
-            bool space = false;
-            for (char c : cleaned) {
-                if (c == '\n' || c == '\r' || c == '\t') {
-                    if (!space && !oneLine.empty()) { oneLine += ' '; space = true; }
-                }
-                else {
-                    oneLine += c;
-                    space = (c == ' ');
-                }
-            }
-            while (!oneLine.empty() && oneLine.back() == ' ') oneLine.pop_back();
-
-            LogToFile("Final response length: " + std::to_string(oneLine.size()));
-            g_replySuccess.fetch_add(1);
-            QueueBotReply(oneLine);
-        }
-        else {
-            LogToFile("AI request failed or empty response");
-            g_replyFail.fetch_add(1);
-            std::string failMsg;
-            { std::lock_guard lock(g_settingsMtx); failMsg = g_failMessage; }
-            QueueBotReply(failMsg.empty() ? "sorry couldnt process that rn" : failMsg);
-        }
-    }
-    catch (...) {
-        LogToFile("AI request threw");
-        g_replyFail.fetch_add(1);
-        if (!g_shuttingDown.load()) {
-            std::string failMsg;
-            { std::lock_guard lock(g_settingsMtx); failMsg = g_failMessage; }
-            QueueBotReply(failMsg.empty() ? "sorry couldnt process that rn" : failMsg);
-        }
-    }
-}
-
 // Cancel in-flight AI HTTP + drop any pending chat sends (bot queue).
 void CancelAI() {
     LogToFile("CancelAI invoked");
     AI::RequestCancel();
     AbortHttp();
+    AiFlow::OnCancel();
     {
         std::lock_guard lock(g_mtx);
         if (!g_pending.empty()) {
@@ -1867,28 +1975,8 @@ void CancelAI() {
 }
 
 void HandleAIRequest(const std::string& userPrompt) {
-    if (g_shuttingDown.load()) return;
-    LogToFile("HandleAIRequest called with prompt: " + userPrompt);
-    if (g_aiInProgress.exchange(true)) {
-        LogToFile("AI already in progress, skipping");
-        return;
-    }
-
-    g_wakeCount.fetch_add(1);
-
-    try {
-        if (g_shuttingDown.load()) {
-            g_aiInProgress = false;
-            return;
-        }
-        StartWorker([userPrompt]() {
-            AiWorkerMain(userPrompt);
-            });
-    }
-    catch (...) {
-        g_aiInProgress = false;
-        LogToFile("Failed to start AI worker");
-    }
+    // The queue, limits and review step live in aiflow.cpp now.
+    AiFlow::Submit(userPrompt, "", AiFlow::Source::Wake);
 }
 
 // =============================================================================
@@ -2030,7 +2118,6 @@ void ProcessMessage(void* message) {
     bool locLiveTranslate = false;
     bool locMuted = false;
     bool locWhitelistMode = false;
-    bool locAutoWel = false, locAutoWb = false, locAutoGg = false;
     std::string locLocalName;
     std::string locWakeWord, locWakeWord2;
     {
@@ -2042,11 +2129,8 @@ void ProcessMessage(void* message) {
         locLocalName = g_localName;
         locWakeWord = g_wakeWord;
         locWakeWord2 = g_wakeWord2;
-        locAutoWel = g_autoWelcome;
-        locAutoWb = g_autoWelcomeBack;
-        locAutoGg = g_autoGg;
     }
-    if (locWakeWord.empty()) locWakeWord = "josebot";
+    if (locWakeWord.empty()) locWakeWord = "hyai";
 
     const bool isFromLocal = IsLocalPlayerSpeaker(speaker, locLocalName);
 
@@ -2058,28 +2142,11 @@ void ProcessMessage(void* message) {
     if (StartsWithCI(TrimCopy(messageBody), "/nickname"))
         return;
 
-    // Auto reactions to system-looking lines (toggleable, rate-limited)
-    if (!locMuted && (locAutoWel || locAutoWb || locAutoGg)) {
-        const std::string trimmedPlain = TrimCopy(plainText);
-        long long nowMs = NowSteadyMs();
-        const long long COOLDOWN_MS = 2500;
-        bool canReact = (nowMs - g_lastAutoReactMs) >= COOLDOWN_MS;
-        if (canReact) {
-            if (locAutoWb && StartsWithCI(trimmedPlain, "[+]")) {
-                g_lastAutoReactMs = nowMs;
-                QueueSend({ "wb", "wb", "", "", "" });
-            }
-            else if (locAutoWel && ContainsWord(trimmedPlain, "has joined Histatu for the first time!")) {
-                g_lastAutoReactMs = nowMs;
-                QueueSend({ "welcome", "welcome", "", "", "" });
-            }
-            else if (locAutoGg && StartsWithCI(trimmedPlain, "[!]")
-                && ContainsWord(trimmedPlain, "reached Ascension")) {
-                g_lastAutoReactMs = nowMs;
-                QueueSend({ "gg", "gg", "", "", "" });
-            }
-        }
-    }
+    // Auto replies (Settings > Auto replies). Only queued here; the rules run
+    // on the UI thread so a slow pattern can never stall the game.
+    if (!locMuted)
+        AutoReply::Offer(TrimCopy(StripMcFormatting(plainText)), speaker, messageBody, isFromLocal,
+            LooksLikeBotLine(speaker, messageBody, plainText));
 
     // =========================================================================
 // Chat minigames (Word Value / Morse / Caesar / Count Letters / Pattern)
@@ -2252,7 +2319,7 @@ void ProcessMessage(void* message) {
     if (!isBotLine)
         RememberGlobalChat(speaker, messageBody, plainText, false);
     else
-        RememberGlobalChat("Josebot", messageBody, plainText, true);
+        RememberGlobalChat("HyAI", messageBody, plainText, true);
 
     if (speaker.empty() || IsReservedSpeakerName(speakerLower) || LooksLikeAnnouncementBody(messageBody)) {
         uint64_t lId = PushLine(std::move(line));
@@ -2291,6 +2358,12 @@ void ProcessMessage(void* message) {
     bool wakeHit = !hay.empty() && HasWholeWord(hay, wakeLower);
     if (!wakeHit && !wake2Lower.empty())
         wakeHit = HasWholeWord(hay, wake2Lower);
+    if (wakeHit) {
+        bool atStart;
+        { std::lock_guard lock(g_settingsMtx); atStart = g_prefs.aiWakeAtStart; }
+        if (atStart && !AiText::WakeAtStart(messageBody.empty() ? plainText : messageBody, { wakeLower, wake2Lower }))
+            wakeHit = false;
+    }
     if (wakeHit && !IsBotIdentity(speaker)) {
         std::string prompt = plainText;
         if (!speaker.empty())
@@ -2311,7 +2384,7 @@ void ProcessMessage(void* message) {
 
         if (!dup && !prompt.empty()) {
             LogToFile("Wake word detected from speaker=[" + speaker + "] prompt=" + prompt);
-            HandleAIRequest(prompt);
+            AiFlow::Submit(prompt, speaker, AiFlow::Source::Wake);
         }
     }
 
@@ -2391,30 +2464,33 @@ void RememberOutgoing(const PendingSend& ps) {
         g_recentOut.pop_front();
 }
 
-void ProcessPending() {
-    if (g_shuttingDown.load()) return;
-    if (g_sendDisabled.load()) return;
-    if (!g_chatReady.load()) return;
-    if (g_inProcessPending.exchange(true)) return;
-    struct Clear {
-        ~Clear() { g_inProcessPending.store(false); }
-    } clear;
+// Everything a bot send involves except the call itself: picks the next message
+// that is due, builds its string and records it as sent. The caller makes the
+// call, because HOW it is made is the difference between safe and a crash - the
+// frame hook has the game call it in place of one frame's work, so none of our
+// code is on the stack underneath (see hookthunk.hpp). Game thread only.
+bool TakePendingSend(void*& outChat, void*& outStr) {
+    outChat = nullptr;
+    outStr = nullptr;
+    if (g_shuttingDown.load()) return false;
+    if (g_sendDisabled.load()) return false;
+    if (!g_chatReady.load()) return false;
 
     if (g_hWnd && !IsWindow(g_hWnd)) {
         InvalidateChatSession("hwnd dead");
-        return;
+        return false;
     }
 
     void* chat = g_pChat.load();
-    if (!chat || !oSendMessage || !g_stringVT.load()) return;
+    if (!chat || !oSendMessage || !g_stringVT.load()) return false;
 
     const DWORD sendTid = g_gameThread.load();
     if (!sendTid || GetCurrentThreadId() != sendTid)
-        return;
+        return false;
 
     if (!ChatObjectAlive(chat)) {
         InvalidateChatSession("chat object dead/mismatched");
-        return;
+        return false;
     }
 
     const long long now = NowSteadyMs();
@@ -2422,15 +2498,15 @@ void ProcessPending() {
     PendingSend ps;
     {
         std::lock_guard lock(g_mtx);
-        if (g_pending.empty()) return;
+        if (g_pending.empty()) return false;
 
         int needGap = SEND_GAP_MS;
         if (g_pending.front().delayBeforeMs > needGap)
             needGap = g_pending.front().delayBeforeMs;
 
-        // Leave the item in the queue; timer / next send will retry when the delay elapses.
+        // Leave the item in the queue; the next frame retries once the delay elapses.
         if (now - g_lastSendMs.load() < needGap)
-            return;
+            return false;
 
         ps = std::move(g_pending.front());
         g_pending.erase(g_pending.begin());
@@ -2439,19 +2515,20 @@ void ProcessPending() {
     void* str = CreateSystemString(ps.gameText);
     if (!str) {
         LogToFile("CreateSystemString failed, dropping: " + ps.gameText);
-        return;
+        return false;
     }
 
     if (!ChatObjectAlive(chat) || g_pChat.load() != chat || !g_chatReady.load()) {
         InvalidateChatSession("chat died before send");
-        return;
+        return false;
     }
 
     RememberOutgoing(ps);
     g_lastSendMs.store(now);
-    if (CallSendSafe(chat, str)) {
-        if (ps.silent)
-            return;
+
+    // Recorded before the call rather than after it succeeds: once the game's
+    // function is running there is no "after" for us to run in.
+    if (!ps.silent) {
         ChatLine line;
         line.plain = ps.typedText.empty() ? ps.gameText : ps.typedText;
         line.segs.push_back({ line.plain, ImVec4(0.45f, 0.85f, 1.0f, 1.0f) });
@@ -2464,9 +2541,28 @@ void ProcessPending() {
         }
         PushLine(std::move(line));
     }
-    else {
+
+    outChat = chat;
+    outStr = str;
+    return true;
+}
+
+// Sends directly, with our frame under the game's SendMessage. Only for builds
+// where the frame hook cannot carry the send (see FlushPendingFallback in
+// hooks.cpp); a collection landing inside the call still takes the game down.
+void ProcessPending() {
+    if (g_inProcessPending.exchange(true)) return;
+    struct Clear {
+        ~Clear() { g_inProcessPending.store(false); }
+    } clear;
+
+    void* chat = nullptr;
+    void* str = nullptr;
+    if (!TakePendingSend(chat, str)) return;
+
+    if (!CallSendSafe(chat, str)) {
         InvalidateChatSession("CallSendSafe fault");
-        LogToFile("Send failed (disabled), dropped: " + ps.gameText);
+        LogToFile("Send failed (disabled)");
     }
 }
 
@@ -2503,6 +2599,7 @@ static void TestAiWorkerMain(const std::string& userPrompt) {
             while (!oneLine.empty() && oneLine.back() == ' ') oneLine.pop_back();
         }
 
+        std::string status;
         {
             std::lock_guard lock(g_mtx);
             if (!oneLine.empty()) {
@@ -2514,8 +2611,9 @@ static void TestAiWorkerMain(const std::string& userPrompt) {
                 g_testStatus = "failed / empty";
             }
             g_testScroll = true;
+            status = g_testStatus;   // the overlay writes it too, so not read unlocked below
         }
-        LogToFile("TestChat response: " + g_testStatus);
+        LogToFile("TestChat response: " + status);
     }
     catch (...) {
         std::lock_guard lock(g_mtx);

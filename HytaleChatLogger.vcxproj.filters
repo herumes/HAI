@@ -15,25 +15,88 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="farmroute.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="autofarm.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="ai.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="chat.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="aiflow.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="aicontext.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="aiprompt.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="aitext.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="aitools.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="aicalc.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="chatprefix.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="chatview.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="autoreply.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="common.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="debugshape.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="extras.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="gamesdk.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="hooks.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="hookthunk.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="knowledge.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="packets.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="placewatch.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="prefab.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="buildscript.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="buildsession.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
     <ClInclude Include="pch.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="position.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="selection.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="settings.hpp">
@@ -48,6 +111,9 @@
     <ClInclude Include="ui.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="worldread.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ai.cpp">
@@ -56,16 +122,55 @@
     <ClCompile Include="chat_core.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="aiflow.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="aicontext.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="aiprompt.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="aitext.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="aitools.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="aicalc.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ui_aistudio.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="chatprefix.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="chatview.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="autoreply.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="common.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="dllmain.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="debugshape.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="extras.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="gamesdk.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="hooks.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="hookthunk.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="knowledge.cpp">
@@ -74,7 +179,31 @@
     <ClCompile Include="legacy_core.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="packets.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="placewatch.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="prefab.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="buildscript.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ui_aiprefab.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="buildsession.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="pch.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="position.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="selection.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="settings.cpp">
@@ -84,6 +213,21 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="ui.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="farmroute.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="autofarm.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ui_farm.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ui_settings.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="worldread.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

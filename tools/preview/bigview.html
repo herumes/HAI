@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Big prefab preview</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin:0; height:100%; background:#05070d; color:#e6e8ee; font:13px/1.45 system-ui, "Segoe UI", sans-serif; overflow:hidden; }
+  canvas#gl { position:fixed; inset:0; width:100%; height:100%; display:block; cursor:grab; }
+  canvas#gl.drag { cursor:grabbing; }
+  .box { position:fixed; background:rgba(14,17,26,.78); border:1px solid #2b303d; border-radius:8px; padding:8px 11px; backdrop-filter:blur(3px); }
+  #hud { left:12px; top:12px; max-width:420px; white-space:pre-line; }
+  #hud b { color:#7fb2ff; }
+  #help { left:12px; bottom:12px; color:#b8bdcc; font-size:12px; }
+  #help kbd { background:#262b3a; border:1px solid #3a4150; border-radius:4px; padding:0 5px; font:inherit; color:#e6e8ee; }
+  #mapbox { right:12px; bottom:12px; padding:6px; }
+  #mapbox canvas { display:block; cursor:crosshair; border-radius:4px; }
+  #mapnote { color:#8a90a2; font-size:11px; margin-top:3px; text-align:center; }
+  #status { left:50%; top:46%; transform:translate(-50%,-50%); text-align:center; font-size:15px; min-width:340px; }
+  #status small { color:#8a90a2; display:block; margin-top:6px; }
+  #ctl { right:12px; top:12px; display:flex; flex-direction:column; gap:6px; font-size:12px; min-width:230px; }
+  #ctl label { display:grid; grid-template-columns:1fr auto; gap:2px 8px; }
+  #ctl input[type=range] { grid-column:1 / 3; width:100%; accent-color:#6f9be0; }
+  #ctl button { background:#262b3a; color:#e6e8ee; border:1px solid #2b303d; border-radius:6px; padding:4px 8px; cursor:pointer; font:inherit; }
+  #ctl button:hover { background:#2f3547; }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="hud" class="box">starting...</div>
+<div id="ctl" class="box">
+  <label>detail distance <b id="radv">300</b><input id="rad" type="range" min="80" max="1400" step="20" value="300"></label>
+  <label>flying speed <b id="spdv">80</b><input id="spd" type="range" min="10" max="1200" step="10" value="80"></label>
+  <div style="display:flex;gap:6px;flex-wrap:wrap">
+    <button id="bOver">overview (O)</button><button id="bTime">time of day (T)</button><button id="bGround">ground (G)</button><button id="bAo">shading (Q)</button>
+  </div>
+</div>
+<div id="help" class="box">
+  <kbd>drag</kbd> look &nbsp; <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> fly &nbsp; <kbd>Space</kbd> up &nbsp; <kbd>C</kbd>/<kbd>Ctrl</kbd> down &nbsp; <kbd>Shift</kbd> fast &nbsp;
+  <kbd>wheel</kbd> speed &nbsp; <kbd>O</kbd> overview &nbsp; <kbd>R</kbd> start &nbsp; <kbd>click the map</kbd> to jump there
+</div>
+<div id="mapbox" class="box"><canvas id="map"></canvas><div id="mapnote">top-down map - click to fly there</div></div>
+<div id="status" class="box">loading...</div>
+
+<script src="mesher.js"></script>
+<script src="bigcore.js"></script>
+<script src="pack.js" onerror="window.HYPACK_MISSING=true"></script>
+<script src="prefab_big.js" onerror="window.HYBIG_MISSING=true"></script>
+<script src="bigview.js"></script>
+</body>
+</html>

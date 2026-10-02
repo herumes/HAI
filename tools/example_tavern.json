@@ -1,0 +1,101 @@
+{
+  "name": "Stone Tavern with Tower",
+  "palette": {
+    "base": ["Rock_Stone_Cobble", "Rock_Stone_Cobble", "Rock_Stone_Cobble_Mossy"],
+    "stone": ["Rock_Stone_Brick", "Rock_Stone_Brick", "Rock_Stone_Brick", "Rock_Stone_Brick_Mossy"],
+    "plaster": "Wood_Village_Wall_White_Full",
+    "beam": "Wood_Darkwood_Beam",
+    "plank": "Wood_Darkwood_Planks",
+    "floor": "Wood_Softwood_Planks",
+    "roof": "Wood_Darkwood_Roof",
+    "ridge": "Wood_Darkwood_Roof_Flat",
+    "window": "Furniture_Tavern_Window",
+    "door": "Furniture_Tavern_Door"
+  },
+  "ops": [
+    {"op": "box", "from": [0, 0, 0], "to": [20, 0, 12], "block": "floor"},
+    {"op": "box", "from": [0, 0, 0], "to": [20, 1, 12], "block": "base", "mode": "walls"},
+    {"op": "box", "from": [0, 2, 0], "to": [20, 5, 12], "block": "stone", "mode": "walls"},
+    {"op": "box", "from": [0, 6, 0], "to": [20, 6, 12], "block": "floor"},
+    {"op": "box", "from": [0, 7, 0], "to": [20, 10, 12], "block": "plaster", "mode": "walls"},
+
+    {"op": "repeat", "count": 3, "step": [4, 0, 0], "ops": [
+      {"op": "box", "from": [0, 0, 0], "to": [0, 10, 0], "block": "beam", "axis": "y"},
+      {"op": "box", "from": [0, 0, 12], "to": [0, 10, 12], "block": "beam", "axis": "y"}
+    ]},
+    {"op": "box", "from": [0, 0, 6], "to": [0, 10, 6], "block": "beam", "axis": "y"},
+    {"op": "repeat", "count": 2, "step": [0, 4, 0], "ops": [
+      {"op": "line", "from": [0, 6, 0], "to": [20, 6, 0], "block": "beam", "axis": "x"},
+      {"op": "line", "from": [0, 6, 12], "to": [20, 6, 12], "block": "beam", "axis": "x"},
+      {"op": "line", "from": [0, 6, 1], "to": [0, 6, 11], "block": "beam", "axis": "z"},
+      {"op": "line", "from": [20, 6, 1], "to": [20, 6, 11], "block": "beam", "axis": "z"}
+    ]},
+
+    {"op": "repeat", "count": 2, "step": [4, 0, 0], "ops": [
+      {"op": "box", "from": [2, 2, 12], "to": [2, 3, 12], "block": "window", "rot": 0},
+      {"op": "box", "from": [2, 2, 0], "to": [2, 3, 0], "block": "window", "rot": 0},
+      {"op": "box", "from": [2, 8, 12], "to": [2, 9, 12], "block": "window", "rot": 0},
+      {"op": "box", "from": [2, 8, 0], "to": [2, 9, 0], "block": "window", "rot": 0}
+    ]},
+    {"op": "box", "from": [0, 2, 3], "to": [0, 3, 3], "block": "window", "rot": 1},
+    {"op": "box", "from": [0, 8, 3], "to": [0, 9, 3], "block": "window", "rot": 1},
+    {"op": "box", "from": [0, 8, 9], "to": [0, 9, 9], "block": "window", "rot": 1},
+    {"op": "mirror", "axis": "x", "at": 10},
+
+    {"op": "box", "from": [10, 1, 12], "to": [10, 2, 12], "block": "air"},
+    {"op": "set", "at": [10, 1, 12], "block": "door", "rot": 0},
+    {"op": "box", "from": [10, 8, 12], "to": [10, 9, 12], "block": "window", "rot": 0},
+
+    {"op": "gable", "from": [0, 11, 0], "to": [20, 11, 12], "ridge": "x", "block": "roof", "cap": "ridge",
+     "overhang": 1, "end_overhang": 1, "gable_fill": "plaster"},
+
+    {"op": "box", "from": [21, 0, 8], "to": [22, 18, 9], "block": "stone"},
+    {"op": "box", "from": [21, 19, 8], "to": [22, 19, 9], "block": "Rock_Stone_Brick_Half"},
+    {"op": "box", "from": [20, 1, 8], "to": [20, 2, 9], "block": "air"},
+    {"op": "set", "at": [19, 1, 8], "block": "Furniture_Village_Brazier"},
+
+    {"op": "box", "from": [8, 0, 13], "to": [12, 0, 16], "block": "base"},
+    {"op": "box", "from": [8, 1, 16], "to": [8, 3, 16], "block": "beam", "axis": "y"},
+    {"op": "box", "from": [12, 1, 16], "to": [12, 3, 16], "block": "beam", "axis": "y"},
+    {"op": "gable", "from": [8, 4, 13], "to": [12, 4, 17], "ridge": "z", "block": "roof", "cap": "ridge", "overhang": 1},
+    {"op": "stairs", "from": [10, -1, 18], "dir": "n", "steps": 1, "width": 5, "block": "Rock_Stone_Cobble_Stairs"},
+    {"op": "set", "at": [7, 1, 17], "block": "Wood_Darkwood_Fence"},
+    {"op": "set", "at": [7, 2, 17], "block": "Furniture_Lumberjack_Lantern"},
+    {"op": "set", "at": [13, 1, 17], "block": "Wood_Darkwood_Fence"},
+    {"op": "set", "at": [13, 2, 17], "block": "Furniture_Lumberjack_Lantern"},
+
+    {"op": "cylinder", "center": [24, 0, 2], "radius": 3, "height": 16, "block": "stone", "mode": "wall"},
+    {"op": "cylinder", "center": [24, 0, 2], "radius": 3, "height": 2, "block": "base", "mode": "wall"},
+    {"op": "cylinder", "center": [24, 0, 2], "radius": 2, "height": 1, "block": "floor", "mode": "fill"},
+    {"op": "cylinder", "center": [24, 8, 2], "radius": 2, "height": 1, "block": "floor", "mode": "fill"},
+    {"op": "cylinder", "center": [24, 16, 2], "radius": 4, "height": 1, "block": "plank", "mode": "fill"},
+    {"op": "cylinder", "center": [24, 17, 2], "radius": 3, "height": 1, "block": "plank", "mode": "fill"},
+    {"op": "cylinder", "center": [24, 18, 2], "radius": 2, "height": 1, "block": "plank", "mode": "fill"},
+    {"op": "cylinder", "center": [24, 19, 2], "radius": 1, "height": 1, "block": "plank", "mode": "fill"},
+    {"op": "set", "at": [24, 20, 2], "block": "plank"},
+    {"op": "set", "points": [[27, 4, 2], [21, 4, 2], [24, 4, 5], [24, 4, -1], [27, 12, 2], [21, 12, 2], [24, 12, 5], [24, 12, -1]], "block": "Rock_Stone_Brick_Ornate"},
+    {"op": "box", "from": [21, 1, 2], "to": [21, 2, 2], "block": "air"},
+
+    {"op": "box", "from": [7, 1, 2], "to": [13, 1, 2], "block": "Furniture_Village_Counter"},
+    {"op": "set", "points": [[1, 1, 1], [2, 1, 1], [1, 1, 2], [19, 1, 1], [18, 1, 1]], "block": "Furniture_Tavern_Barrel"},
+    {"op": "repeat", "count": 3, "step": [5, 0, 0], "ops": [
+      {"op": "set", "at": [5, 1, 7], "block": "Furniture_Tavern_Table"},
+      {"op": "set", "points": [[4, 1, 7], [6, 1, 7], [5, 1, 6], [5, 1, 8]], "block": "Furniture_Tavern_Stool"},
+      {"op": "set", "at": [5, 5, 7], "block": "Furniture_Tavern_Chandelier"}
+    ]},
+
+    {"op": "box", "from": [1, 6, 5], "to": [1, 6, 9], "block": "air"},
+    {"op": "stairs", "from": [1, 1, 10], "dir": "n", "steps": 6, "block": "Wood_Darkwood_Stairs"},
+
+    {"op": "repeat", "count": 4, "step": [4, 0, 0], "ops": [
+      {"op": "line", "from": [4, 10, 1], "to": [4, 10, 11], "block": "beam", "axis": "z"}
+    ]},
+    {"op": "set", "points": [[3, 7, 1], [7, 7, 1], [13, 7, 1], [17, 7, 1]], "block": "Furniture_Tavern_Bed"},
+    {"op": "set", "points": [[10, 7, 1], [10, 7, 11]], "block": "Furniture_Tavern_Chest_Small"},
+    {"op": "set", "points": [[19, 7, 3], [19, 7, 9]], "block": "Furniture_Tavern_Wardrobe"},
+
+    {"op": "scatter", "from": [0, 0, 0], "to": [20, 5, 12], "block": "Rock_Stone_Brick_Mossy", "where": "replace", "only": "Rock_Stone_Brick", "chance": 0.05, "seed": 4},
+    {"op": "scatter", "from": [-3, 0, 13], "to": [23, 0, 21], "block": ["Plant_Flower_Common_Pink", "Plant_Flower_Common_Red2", "Plant_Flower_Tall_Yellow", "Plant_Bush_Green"],
+     "where": "empty", "chance": 0.07, "seed": 9}
+  ]
+}

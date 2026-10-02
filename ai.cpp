@@ -5,6 +5,8 @@
 #include "chat.hpp"
 #include "settings.hpp"
 #include "extras.hpp"
+#include "aicontext.hpp"
+#include "aitools.hpp"
 
 // Chat / memory globals live in legacy_core.cpp (non-static).
 extern std::deque<ChatMessage> g_memory;
@@ -22,42 +24,6 @@ namespace AI {
 
     bool IsCancelRequested() {
         return g_cancelRequested.load();
-    }
-
-    // Base tools (always available). Web search is appended only when enabled.
-    static const char* TOOLS_JSON_BASE =
-        R"HYTOOLS([{"type":"function","function":{"name":"lookup_mob","description":"Get accurate health, traits and drops for one specific Hytale mob by name or in-game ID. Always call this for questions about a named mob.","parameters":{"type":"object","properties":{"query":{"type":"string","description":"Mob display name or in-game ID e.g. Wild Pig, Pig_Wild, Scarak Broodmother, Eye_Void"}},"required":["query"]}}},{"type":"function","function":{"name":"search_mobs","description":"Search or filter mobs by free text, by an item they drop, by trait, or by health range. Use for questions like what drops X, timid animals, high health mobs, etc.","parameters":{"type":"object","properties":{"query":{"type":"string","description":"Free-text keywords"},"drops_item":{"type":"string","description":"Item name or ID the mob must drop e.g. Void Essence, Raw Pork"},"trait":{"type":"string","description":"timid | mountable | spawns_at_night | attack_when_startled"},"min_health":{"type":"integer"},"max_health":{"type":"integer"},"limit":{"type":"integer","description":"Max results default 8"}}}}},{"type":"function","function":{"name":"lookup_item","description":"Get accurate info for one Hytale item: quality, level, description, categories, crafting recipe. Always call for questions about a named item or how to craft something.","parameters":{"type":"object","properties":{"query":{"type":"string","description":"Item display name or in-game ID e.g. Void Essence, Raw Pork, Farmer's Workbench"}},"required":["query"]}}},{"type":"function","function":{"name":"search_items","description":"Search items by free text, quality, or category.","parameters":{"type":"object","properties":{"query":{"type":"string"},"quality":{"type":"string","description":"Common, Uncommon, Rare, Epic, etc."},"category":{"type":"string","description":"Weapons, Food, etc."},"limit":{"type":"integer","description":"Max results default 8"}}}}},{"type":"function","function":{"name":"get_time","description":"Get the current date/time for a place, timezone, or abbreviation. Use for questions like what time is it in Germany, what time is GMT, CST, Tokyo, London, etc. Empty query = local time on the bot host.","parameters":{"type":"object","properties":{"query":{"type":"string","description":"Country, city, timezone name, or abbr e.g. Germany, Berlin, UTC, GMT, CST, PST, EST, CET, Tokyo, London. Empty for local."}}}}},{"type":"function","function":{"name":"set_reminder","description":"Set reminders for users. Convert minutes to seconds if needed (2 minutes=120). user=player name, in_seconds=delay, message=what to say later.","parameters":{"type":"object","properties":{"user":{"type":"string","description":"Player name to address in the reminder"},"in_seconds":{"type":"integer","description":"Delay in seconds (min 5, max 604800)"},"message":{"type":"string","description":"What to say when the reminder fires"}},"required":["user","in_seconds","message"]}}},{"type":"function","function":{"name":"list_reminders","description":"List active reminders, optionally filtered by player name.","parameters":{"type":"object","properties":{"user":{"type":"string","description":"Optional player name filter"}}}}},{"type":"function","function":{"name":"cancel_reminder","description":"Cancel an active reminder by its numeric id.","parameters":{"type":"object","properties":{"id":{"type":"integer","description":"Reminder id from set_reminder / list_reminders"}},"required":["id"]}}}]
-)HYTOOLS";
-
-    // Short schema: only present when web search is enabled (saves prompt tokens when off).
-    static const char* WEB_SEARCH_TOOL_JSON =
-        R"HYWS({"type":"function","function":{"name":"web_search","description":"Live web search for current facts, news, prices, or info not covered by game knowledge/tools. Prefer lookup_mob/lookup_item for Hytale. Use short keyword queries.","parameters":{"type":"object","properties":{"query":{"type":"string","description":"Focused keywords, not a full sentence"},"freshness":{"type":"string","description":"oneDay|oneWeek|oneMonth|oneYear|noLimit"}},"required":["query"]}}}
-)HYWS";
-
-    static std::string BuildToolsJson() {
-        bool ws = false;
-        {
-            std::lock_guard lock(g_settingsMtx);
-            ws = g_webSearchEnabled;
-        }
-        std::string base = TOOLS_JSON_BASE;
-        // Raw string literals may end with "]\n" — trim so we can splice correctly.
-        auto rtrim = [](std::string& s) {
-            while (!s.empty() && (s.back() == '\n' || s.back() == '\r'
-                || s.back() == ' ' || s.back() == '\t'))
-                s.pop_back();
-            };
-        rtrim(base);
-        if (!ws) return base;
-
-        if (!base.empty() && base.back() == ']')
-            base.pop_back();
-        std::string web = WEB_SEARCH_TOOL_JSON;
-        rtrim(web);
-        base += ",";
-        base += web;
-        base += "]";
-        return base;
     }
 
     void EnsureKnowledgeLoaded() {
@@ -92,80 +58,6 @@ namespace AI {
             }
         }
         return false;
-    }
-
-    static std::string ExtractToolArgString(const std::string& argsJson, const char* key) {
-        std::string val;
-        ExtractJsonStringField(argsJson, key, val);
-        return val;
-    }
-
-    static int ExtractToolArgInt(const std::string& argsJson, const char* key, int def = 0) {
-        std::string pat = std::string("\"") + key + "\"";
-        size_t pos = argsJson.find(pat);
-        if (pos == std::string::npos) return def;
-        pos = argsJson.find(':', pos + pat.size());
-        if (pos == std::string::npos) return def;
-        ++pos;
-        while (pos < argsJson.size() && (argsJson[pos] == ' ' || argsJson[pos] == '\t')) ++pos;
-        if (pos >= argsJson.size() || argsJson[pos] == 'n') return def;
-        try {
-            size_t end = pos;
-            while (end < argsJson.size() && (isdigit((unsigned char)argsJson[end]) || argsJson[end] == '-' || argsJson[end] == '+')) ++end;
-            if (end == pos) return def;
-            return std::stoi(argsJson.substr(pos, end - pos));
-        }
-        catch (...) { return def; }
-    }
-
-    static std::string ExecuteTool(const std::string& name, const std::string& argsJson) {
-        if (name == "lookup_mob") {
-            return Knowledge::ToolLookupMob(ExtractToolArgString(argsJson, "query"));
-        }
-        if (name == "search_mobs") {
-            return Knowledge::ToolSearchMobs(
-                ExtractToolArgString(argsJson, "query"),
-                ExtractToolArgString(argsJson, "drops_item"),
-                ExtractToolArgString(argsJson, "trait"),
-                ExtractToolArgInt(argsJson, "min_health", 0),
-                ExtractToolArgInt(argsJson, "max_health", 0),
-                ExtractToolArgInt(argsJson, "limit", 8)
-            );
-        }
-        if (name == "lookup_item") {
-            return Knowledge::ToolLookupItem(ExtractToolArgString(argsJson, "query"));
-        }
-        if (name == "search_items") {
-            return Knowledge::ToolSearchItems(
-                ExtractToolArgString(argsJson, "query"),
-                ExtractToolArgString(argsJson, "quality"),
-                ExtractToolArgString(argsJson, "category"),
-                ExtractToolArgInt(argsJson, "limit", 8)
-            );
-        }
-        if (name == "get_time") {
-            return Extras::ToolGetTime(ExtractToolArgString(argsJson, "query"));
-        }
-        if (name == "set_reminder") {
-            return Extras::ToolSetReminder(
-                ExtractToolArgString(argsJson, "user"),
-                ExtractToolArgInt(argsJson, "in_seconds", 0),
-                ExtractToolArgString(argsJson, "message")
-            );
-        }
-        if (name == "list_reminders") {
-            return Extras::ToolListReminders(ExtractToolArgString(argsJson, "user"));
-        }
-        if (name == "cancel_reminder") {
-            return Extras::ToolCancelReminder((uint64_t)ExtractToolArgInt(argsJson, "id", 0));
-        }
-        if (name == "web_search") {
-            return Extras::ToolWebSearch(
-                ExtractToolArgString(argsJson, "query"),
-                ExtractToolArgString(argsJson, "freshness")
-            );
-        }
-        return "Unknown tool: " + name;
     }
 
     // ---------------------------------------------------------------------------
@@ -316,9 +208,12 @@ namespace AI {
         }
     }
 
-    // Process tool_calls array and append tool role messages to messagesJson
+    // Runs the tool calls of one model turn and appends the assistant message plus a
+    // tool message per call to messagesJson. Each call is checked against the tool
+    // rules first: a tool that is off never runs, and one set to "ask" waits for
+    // opt.approveTool (which may block, and may edit the arguments).
     static void AppendToolResults(std::string& messagesJson, const std::string& content,
-        const std::string& toolCallsRaw, bool openaiStyle)
+        const std::string& toolCallsRaw, const CallOptions& opt, Trace* trace)
     {
         if (!messagesJson.empty() && messagesJson.back() == ']')
             messagesJson.pop_back();
@@ -372,14 +267,41 @@ namespace AI {
 
             if (toolId.empty()) toolId = "call_" + std::to_string(ti);
             LogToFile("Tool call: " + toolName + " args=" + argsStr.substr(0, 200));
-            std::string result = ExecuteTool(toolName, argsStr);
+
+            ToolEvent ev;
+            ev.name = toolName;
+            const long long t0 = NowSteadyMs();
+            std::string result;
+            if (!AiTools::Find(toolName)) {
+                result = "Unknown tool: " + toolName;
+                ev.outcome = 3;
+            }
+            else if (AiTools::ModeFor(toolName) == AiText::ToolMode::Off) {
+                result = "This tool is switched off. Answer without it.";
+                ev.outcome = 2;
+            }
+            else {
+                bool run = true;
+                if (AiTools::ModeFor(toolName) == AiText::ToolMode::Ask && opt.approveTool)
+                    run = opt.approveTool(toolName, argsStr) == ToolVerdict::Run;
+                if (run) {
+                    result = AiTools::Execute(toolName, argsStr);
+                }
+                else {
+                    result = "The user declined to run this tool. Answer without it.";
+                    ev.outcome = 1;
+                }
+            }
+            ev.args = argsStr;
+            ev.result = result;
+            ev.ms = NowSteadyMs() - t0;
+            if (trace) trace->tools.push_back(ev);
             LogToFile("Tool result (" + std::to_string(result.size()) + " chars): " + result.substr(0, 150));
 
             // OpenAI and Ollama both accept role=tool with tool_call_id
             messagesJson += ",{\"role\":\"tool\",\"tool_call_id\":\"" + JsonEscape(toolId)
                 + "\",\"name\":\"" + JsonEscape(toolName)
                 + "\",\"content\":\"" + JsonEscape(result) + "\"}";
-            (void)openaiStyle;
         }
         messagesJson += "]";
     }
@@ -460,35 +382,56 @@ namespace AI {
         return httpOk;
     }
 
+    // First integer after "key": in a response body (token counts), or -1.
+    static int BodyInt(const std::string& body, const char* key) {
+        const std::string pat = std::string("\"") + key + "\"";
+        size_t pos = body.find(pat);
+        if (pos == std::string::npos) return -1;
+        pos = body.find(':', pos + pat.size());
+        if (pos == std::string::npos) return -1;
+        ++pos;
+        while (pos < body.size() && body[pos] == ' ') ++pos;
+        size_t end = pos;
+        while (end < body.size() && isdigit((unsigned char)body[end])) ++end;
+        if (end == pos || end - pos > 9) return -1;
+        return std::atoi(body.substr(pos, end - pos).c_str());
+    }
+
     bool GetResponse(const std::string& userPrompt, std::string& response) {
+        return GetResponse(userPrompt, response, CallOptions{}, nullptr);
+    }
+
+    bool GetResponse(const std::string& userPrompt, std::string& response,
+        const CallOptions& opt, Trace* trace)
+    {
         LogToFile("=== AI Request start ===");
         response.clear();
         g_cancelRequested.store(false);
+        const long long startMs = NowSteadyMs();
+        struct Finish {
+            Trace* t; long long start;
+            ~Finish() { if (t) t->ms = NowSteadyMs() - start; }
+        } finish{ trace, startMs };
 
         if (userPrompt.empty() || g_shuttingDown.load()) return false;
         LogToFile("Prompt: " + userPrompt);
 
         EnsureKnowledgeLoaded();
 
-        const std::string systemPrompt = GetCachedSystemPrompt();
-        if (!systemPrompt.empty())
-            LogToFile("System prompt loaded, length: " + std::to_string(systemPrompt.size()));
-        else
-            LogToFile("No CONTEXT.md found, proceeding without system prompt");
-
-        int currentMaxMem = 4, currentMaxChat = 20;
-        bool includeGlobal = true;
         std::string model, host, thinkLvl, provider, openaiBase, openaiKey, openaiModel;
         int port = 11434;
+        int currentMaxMem = 4;
         bool thinkOn = false;
         float temperature = 1.0f;
         int numPredict = 512;
         int numCtx = 32768;
+        float topP = 0.95f;
+        int topK = 64;
         {
             std::lock_guard lock(g_settingsMtx);
+            topP = g_prefs.topP;
+            topK = g_prefs.topK;
             currentMaxMem = g_maxMemory;
-            currentMaxChat = g_maxChatContext;
-            includeGlobal = g_includeGlobalChat;
             model = g_ollamaModel;
             host = g_ollamaHost;
             port = g_ollamaPort;
@@ -521,51 +464,33 @@ namespace AI {
         if (numPredict > 16549) numPredict = 16549;
         if (numCtx < 2048) numCtx = 2048;
         if (numCtx > 131072) numCtx = 131072;
-
-        std::string globalBlock;
-        if (includeGlobal) {
-            std::lock_guard lock(g_mtx);
-            const int n = (int)g_globalChat.size();
-            const int startIdx = (n > currentMaxChat) ? (n - currentMaxChat) : 0;
-            for (int i = startIdx; i < n; ++i) {
-                const auto& e = g_globalChat[(size_t)i];
-                if (!e.speaker.empty()) globalBlock += e.speaker + ": " + e.body + "\n";
-                else globalBlock += e.plain + "\n";
-            }
+        if (trace) {
+            trace->provider = useOpenAI ? "openai" : "ollama";
+            trace->model = model;
         }
-        if (!globalBlock.empty())
-            LogToFile("Global chat context chars: " + std::to_string(globalBlock.size()));
 
-        std::string composed = userPrompt;
-        if (!globalBlock.empty()) {
-            composed = "Recent server chat (context only, do not repeat it):\n"
-                + globalBlock
-                + "\nThe latest message that mentioned you (reply to this, naturally, in character):\n"
-                + userPrompt;
-        }
-        Extras::SetLastComposedPrompt(composed);
+        // Everything sent besides the tools: system prompt, memory, chat context, question.
+        AiContext::Request creq;
+        creq.userPrompt = userPrompt;
+        creq.speaker = opt.speaker;
+        creq.extraNote = opt.extraNote;
+        creq.useFrozen = opt.useFrozenChat;
+        creq.frozenChat = opt.frozenChat;
+        const AiContext::Built built = AiContext::Build(creq);
+        if (!built.systemPrompt.empty())
+            LogToFile("System prompt loaded, length: " + std::to_string(built.systemPrompt.size()));
+        else
+            LogToFile("No system prompt (CONTEXT.md missing or every preset is off), proceeding without");
+        if (!built.chatBlock.empty())
+            LogToFile("Global chat context chars: " + std::to_string(built.chatBlock.size()));
+        if (opt.onContext) opt.onContext(built);
+        if (!built.parts.empty()) Extras::SetLastComposedPrompt(built.parts.back().text);
 
-        // messages JSON array
-        std::string messagesJson = "[";
-        bool needComma = false;
-        auto pushMsg = [&](const std::string& role, const std::string& content, const std::string& extraJson = "") {
-            if (needComma) messagesJson += ",";
-            needComma = true;
-            messagesJson += "{\"role\":\"" + role + "\",\"content\":\"" + JsonEscape(content) + "\"";
-            if (!extraJson.empty()) messagesJson += extraJson;
-            messagesJson += "}";
-            };
-        if (!systemPrompt.empty())
-            pushMsg("system", systemPrompt);
-        {
-            std::lock_guard lock(g_mtx);
-            for (const auto& m : g_memory)
-                pushMsg(m.role, m.content);
-        }
-        pushMsg("user", composed);
-        messagesJson += "]";
+        std::string messagesJson = AiContext::MessagesJson(built);
+        if (trace) trace->requestJson = messagesJson;
 
-        const std::string toolsJson = BuildToolsJson();
+        std::string toolsJson = built.toolsJson;
+        const bool haveTools = toolsJson.size() > 2;
         const int MAX_ROUNDS = 4;
         bool success = false;
 
@@ -573,11 +498,13 @@ namespace AI {
         if (useOpenAI) {
             if (!ParseOpenAiBase(openaiBase, oaUrl)) {
                 LogToFile("Invalid OpenAI base URL: " + openaiBase);
+                if (trace) trace->error = "invalid OpenAI base URL";
                 LogToFile("=== AI Request end ===");
                 return false;
             }
             if (openaiKey.empty()) {
                 LogToFile("OpenAI API key is empty");
+                if (trace) trace->error = "OpenAI API key is empty";
                 LogToFile("=== AI Request end ===");
                 return false;
             }
@@ -588,27 +515,29 @@ namespace AI {
                 LogToFile("AI cancelled before round " + std::to_string(round));
                 break;
             }
+            if (trace) trace->rounds = round + 1;
 
             std::string payload;
             if (useOpenAI) {
                 // OpenAI-compatible chat completions
-                char optBuf[128];
+                char optBuf[160];
                 snprintf(optBuf, sizeof(optBuf),
-                    ",\"temperature\":%.3f,\"max_tokens\":%d",
-                    (double)temperature, numPredict);
+                    ",\"temperature\":%.3f,\"max_tokens\":%d,\"top_p\":%.3f",
+                    (double)temperature, numPredict, (double)topP);
                 payload = "{\"model\":\"" + JsonEscape(model)
                     + "\",\"messages\":" + messagesJson
-                    + ",\"stream\":false"
-                    + ",\"tools\":" + toolsJson
-                    + ",\"tool_choice\":\"auto\""
-                    + optBuf
-                    + "}";
+                    + ",\"stream\":false";
+                if (haveTools)
+                    payload += ",\"tools\":" + toolsJson + ",\"tool_choice\":\"auto\"";
+                payload += optBuf;
+                payload += "}";
             }
             else {
                 payload = "{\"model\":\"" + JsonEscape(model)
                     + "\",\"messages\":" + messagesJson
-                    + ",\"stream\":false"
-                    + ",\"tools\":" + toolsJson;
+                    + ",\"stream\":false";
+                if (haveTools)
+                    payload += ",\"tools\":" + toolsJson;
                 // Always send think explicitly. Gemma4 defaults to thinking when the key is omitted.
                 if (thinkOn) {
                     std::string lvl = ToLower(TrimCopy(thinkLvl));
@@ -623,10 +552,10 @@ namespace AI {
                     payload += ",\"think\":false";
                 }
                 {
-                    char optBuf[192];
+                    char optBuf[224];
                     snprintf(optBuf, sizeof(optBuf),
-                        ",\"options\":{\"temperature\":%.3f,\"num_predict\":%d,\"top_p\":0.95,\"top_k\":64,\"num_ctx\":%d}",
-                        (double)temperature, numPredict, numCtx);
+                        ",\"options\":{\"temperature\":%.3f,\"num_predict\":%d,\"top_p\":%.3f,\"top_k\":%d,\"num_ctx\":%d}",
+                        (double)temperature, numPredict, (double)topP, topK, numCtx);
                     payload += optBuf;
                 }
                 payload += "}";
@@ -640,7 +569,7 @@ namespace AI {
                 + " messages_chars=" + std::to_string(messagesJson.size())
                 + " tools_chars=" + std::to_string(toolsJson.size())
                 + " payload_chars=" + std::to_string(payload.size())
-                + " sys_prompt_chars=" + std::to_string(systemPrompt.size()));
+                + " sys_prompt_chars=" + std::to_string(built.systemPrompt.size()));
             LogToFile(std::string("Payload head: ") + payload.substr(0, 200));
             if (payload.size() > 200)
                 LogToFile(std::string("Payload tail: ") + payload.substr(payload.size() - 120));
@@ -668,7 +597,24 @@ namespace AI {
 
             if (!httpOk) {
                 LogToFile("AI HTTP failed on round " + std::to_string(round));
+                if (trace) {
+                    std::string em;
+                    ExtractJsonStringField(accumulated, "message", em);
+                    if (em.empty()) ExtractJsonStringField(accumulated, "error", em);
+                    trace->error = statusCode ? "HTTP " + std::to_string(statusCode) + (em.empty() ? "" : ": " + em)
+                                              : "could not reach the model";
+                }
                 break;
+            }
+
+            if (trace) {
+                // Ollama: prompt_eval_count / eval_count. OpenAI: usage.prompt_tokens / completion_tokens.
+                int pt = BodyInt(accumulated, "prompt_eval_count");
+                if (pt < 0) pt = BodyInt(accumulated, "prompt_tokens");
+                int rt = BodyInt(accumulated, "eval_count");
+                if (rt < 0) rt = BodyInt(accumulated, "completion_tokens");
+                if (pt >= 0) trace->promptTokens = (std::max)(0, trace->promptTokens) + pt;
+                if (rt >= 0) trace->replyTokens = (std::max)(0, trace->replyTokens) + rt;
             }
 
             std::string content;
@@ -681,11 +627,13 @@ namespace AI {
                 if (!content.empty()) {
                     response = content;
                     success = true;
-                    std::lock_guard lock(g_mtx);
-                    g_memory.push_back({ "user", userPrompt });
-                    g_memory.push_back({ "assistant", response });
-                    while (g_memory.size() > (size_t)currentMaxMem * 2)
-                        g_memory.pop_front();
+                    if (opt.remember) {
+                        std::lock_guard lock(g_mtx);
+                        g_memory.push_back({ "user", userPrompt });
+                        g_memory.push_back({ "assistant", response });
+                        while (g_memory.size() > (size_t)currentMaxMem * 2)
+                            g_memory.pop_front();
+                    }
                     LogToFile("Success, response length: " + std::to_string(response.size()));
                 }
                 else {
@@ -695,18 +643,21 @@ namespace AI {
                     ExtractJsonStringField(accumulated, "error", errMsg);
                     if (!errMsg.empty())
                         LogToFile("API error field: " + errMsg);
+                    if (trace) trace->error = errMsg.empty() ? "the model returned an empty reply" : errMsg;
                 }
                 break;
             }
 
             // Tool calls present: execute and continue
-            AppendToolResults(messagesJson, content, toolCallsRaw, useOpenAI);
+            AppendToolResults(messagesJson, content, toolCallsRaw, opt, trace);
+            if (round + 1 == MAX_ROUNDS && trace) trace->error = "still calling tools after " + std::to_string(MAX_ROUNDS) + " rounds";
         }
 
         if (g_cancelRequested.load()) {
             LogToFile("AI request cancelled — discarding response");
             response.clear();
             success = false;
+            if (trace) trace->error = "cancelled";
         }
 
         LogToFile("=== AI Request end ===");

@@ -1,0 +1,61 @@
+{
+  "name": "Timber Cottage",
+  "palette": {
+    "stone": ["Rock_Stone_Cobble", "Rock_Stone_Cobble", "Rock_Stone_Cobble_Mossy"],
+    "plaster": "Wood_Village_Wall_White_Full",
+    "beam": "Wood_Darkwood_Beam",
+    "floor": "Wood_Softwood_Planks",
+    "roof": "Wood_Darkwood_Roof",
+    "ridge": "Wood_Darkwood_Roof_Flat",
+    "brick": "Rock_Stone_Brick",
+    "window": "Furniture_Village_Window",
+    "door": "Furniture_Village_Door"
+  },
+  "ops": [
+    {"op": "box", "from": [0, 0, 0], "to": [10, 0, 8], "block": "floor"},
+    {"op": "box", "from": [0, 0, 0], "to": [10, 1, 8], "block": "stone", "mode": "walls"},
+    {"op": "box", "from": [0, 2, 0], "to": [10, 4, 8], "block": "plaster", "mode": "walls"},
+
+    {"op": "repeat", "count": 2, "step": [10, 0, 0], "ops": [
+      {"op": "box", "from": [0, 0, 0], "to": [0, 4, 0], "block": "beam", "axis": "y"},
+      {"op": "box", "from": [0, 0, 8], "to": [0, 4, 8], "block": "beam", "axis": "y"}
+    ]},
+    {"op": "repeat", "count": 2, "step": [4, 0, 0], "ops": [
+      {"op": "box", "from": [3, 0, 0], "to": [3, 4, 0], "block": "beam", "axis": "y"},
+      {"op": "box", "from": [3, 0, 8], "to": [3, 4, 8], "block": "beam", "axis": "y"}
+    ]},
+    {"op": "line", "from": [0, 4, 0], "to": [10, 4, 0], "block": "beam", "axis": "x"},
+    {"op": "line", "from": [0, 4, 8], "to": [10, 4, 8], "block": "beam", "axis": "x"},
+    {"op": "line", "from": [0, 4, 1], "to": [0, 4, 7], "block": "beam", "axis": "z"},
+    {"op": "line", "from": [10, 4, 1], "to": [10, 4, 7], "block": "beam", "axis": "z"},
+
+    {"op": "box", "from": [5, 1, 8], "to": [5, 2, 8], "block": "air"},
+    {"op": "set", "at": [5, 1, 8], "block": "door", "rot": 0},
+    {"op": "box", "from": [1, 2, 8], "to": [2, 3, 8], "block": "window", "rot": 0},
+    {"op": "box", "from": [8, 2, 8], "to": [9, 3, 8], "block": "window", "rot": 0},
+    {"op": "box", "from": [1, 2, 0], "to": [2, 3, 0], "block": "window", "rot": 0},
+    {"op": "box", "from": [8, 2, 0], "to": [9, 3, 0], "block": "window", "rot": 0},
+    {"op": "box", "from": [0, 2, 4], "to": [0, 3, 4], "block": "window", "rot": 1},
+
+    {"op": "gable", "from": [0, 5, 0], "to": [10, 5, 8], "ridge": "x", "block": "roof", "cap": "ridge",
+     "overhang": 1, "end_overhang": 1, "gable_fill": "plaster"},
+
+    {"op": "box", "from": [10, 0, 3], "to": [11, 11, 4], "block": "brick"},
+    {"op": "box", "from": [10, 12, 3], "to": [11, 12, 4], "block": "Rock_Stone_Brick_Half"},
+
+    {"op": "stairs", "from": [5, 0, 9], "dir": "n", "steps": 1, "width": 3, "block": "Rock_Stone_Cobble_Stairs"},
+    {"op": "set", "at": [2, 0, 10], "block": "Wood_Hardwood_Fence"},
+    {"op": "set", "at": [2, 1, 10], "block": "Furniture_Lumberjack_Lantern"},
+    {"op": "set", "at": [8, 0, 10], "block": "Wood_Hardwood_Fence"},
+    {"op": "set", "at": [8, 1, 10], "block": "Furniture_Lumberjack_Lantern"},
+    {"op": "box", "from": [1, -1, 10], "to": [9, -1, 12], "block": "Soil_Grass"},
+    {"op": "scatter", "from": [1, -1, 10], "to": [9, 3, 12], "block": ["Plant_Flower_Common_Pink", "Plant_Flower_Common_Red2", "Plant_Flower_Tall_Yellow"],
+     "where": "top", "chance": 0.35, "seed": 3},
+
+    {"op": "line", "from": [5, 4, 1], "to": [5, 4, 7], "block": "beam", "axis": "z"},
+    {"op": "set", "at": [5, 3, 4], "block": "Furniture_Kweebec_Lantern_Ceiling"},
+    {"op": "set", "at": [3, 1, 4], "block": "Furniture_Village_Table"},
+    {"op": "set", "at": [2, 1, 4], "block": "Furniture_Village_Chair", "rot": 1},
+    {"op": "set", "at": [8, 1, 6], "block": "Furniture_Village_Bed", "rot": 0}
+  ]
+}

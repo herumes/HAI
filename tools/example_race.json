@@ -1,0 +1,46 @@
+{
+  "name": "Sunset Kart Circuit",
+  "palette": {
+    "road": "Kart_Asphalt",
+    "rail": "Kart_Armco",
+    "kerb": ["Kart_Curb_Red", "Kart_Curb_Yellow"],
+    "tyres": "Kart_Tire_Wall"
+  },
+  "ops": [
+    {"op":"road","points":[[20,-1,10],[80,-1,10],[100,-1,25],[100,-1,45],[75,-1,60],[55,-1,46],[35,-1,62],[10,-1,55],[5,-1,30]],
+     "closed":true,"width":9,"radius":10,"block":"road","edge":"kerb","stripe":2,
+     "line":"Kart_Painted_Line","dash":[3,3],"barrier":"rail","barrier_gap":1},
+
+    {"op":"road","points":[[100,-1,25],[100,-1,45],[75,-1,60]],"width":9,"radius":10,"block":"road",
+     "edge":"kerb","stripe":2,"barrier":"tyres","auto_rot":false,"barrier_gap":1,"barrier_sides":"left"},
+
+    {"op":"road","points":[[24,-1,10],[32,-1,20],[68,-1,20],[76,-1,10]],"width":5,"radius":5,"block":"road",
+     "barrier":"Kart_Jersey","barrier_sides":"right","barrier_gap":0},
+    {"op":"repeat","count":12,"step":[3,0,0],"ops":[
+      {"op":"set","at":[36,0,22],"block":"Kart_Pit_Box"},
+      {"op":"set","at":[36,0,25],"block":"Red_Workwall"}
+    ]},
+
+    {"op":"box","from":[30,0,6],"to":[31,0,14],"block":"Kart_Finish_Checker"},
+    {"op":"set","at":[27,0,8],"block":"Kart_Start_Grid"},
+    {"op":"set","at":[27,0,12],"block":"Kart_Start_Grid_2"},
+    {"op":"set","at":[24,0,8],"block":"Kart_Start_Grid_3"},
+    {"op":"set","at":[24,0,12],"block":"Kart_Start_Grid_4"},
+    {"op":"set","at":[21,0,8],"block":"Kart_Start_Grid_5"},
+    {"op":"set","at":[21,0,12],"block":"Kart_Start_Grid_6"},
+
+    {"op":"box","from":[34,0,4],"to":[34,4,4],"block":"NoCube_Neon_Block_Yellow"},
+    {"op":"box","from":[34,0,16],"to":[34,4,16],"block":"NoCube_Neon_Block_Yellow"},
+    {"op":"box","from":[34,5,4],"to":[34,5,16],"block":"NoCube_Neon_Block_Magenta"},
+
+    {"op":"set","points":[[30,0,2],[30,0,18]],"block":"Flag"},
+    {"op":"repeat","count":4,"step":[20,0,0],"ops":[{"op":"set","at":[40,0,1],"block":"Kart_Billboard"}]},
+    {"op":"set","points":[[15,0,4],[15,0,16]],"block":"Kart_Floodlight"},
+    {"op":"set","points":[[66,0,21],[67,0,22],[68,0,21]],"block":"Kart_Cone"},
+
+    {"op":"set","at":[47,0,36],"block":"Kart_Podium_2"},
+    {"op":"set","at":[50,0,36],"block":"Kart_Podium_1"},
+    {"op":"set","at":[53,0,36],"block":"Kart_Podium_3"},
+    {"op":"set","at":[56,0,36],"block":"Kart_Trophy"}
+  ]
+}

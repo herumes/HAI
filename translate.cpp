@@ -63,7 +63,7 @@ static bool IsCommonChatSlang(const std::string& text) {
         "gtg","ofc","pvp","pve","xp","hp","okey","okay","cool","nice","true","fake",
         "wait","what","why","how","who","wow","good","bad","sure","stop","go","run",
         "help","sell","buy","trade","party","raid","boss","loot","mine","craft",
-        "farm","skyblock","histatu","josebot","hello","thanks","sorry","please",
+        "farm","skyblock","histatu","hyai","hello","thanks","sorry","please",
         "wsp","wyd","hbu","wbu","omw","gnight","wb","welcome","tyty",
         "xd","xdd","haha","hahaha","bro","dude","man","sir","fam","any1","u","ur",
         "r","n","y","m","cya","bye","bb","tyvm","tysm","npnp","ggs","g",
@@ -161,6 +161,17 @@ bool ShouldAutoTranslate(const std::string& text) {
     if (t.size() < 4) return false;
     if (CountAsciiLetters(t) < 3 && !HasLatinAccent(t)) return false;
     if (IsCommonChatSlang(t)) return false;
+    // The heuristics below only know how to spot "this is already English". For
+    // any other target language, let the translator decide; a line that is
+    // already in the target comes back marked Skipped and shows nothing.
+    {
+        std::string target;
+        {
+            std::lock_guard slock(g_settingsMtx);
+            target = ToLower(TrimCopy(g_prefs.txTarget));
+        }
+        if (!target.empty() && target != "en") return true;
+    }
     if (LooksLikeForeign(t)) return true;
     if (LooksLikeEnglish(t)) return false;
     if (t.size() >= 48 && CountAsciiLetters(t) >= 24) return true;
@@ -419,6 +430,7 @@ void ApplyIncomingResult(uint64_t lineId, const TranslateResult& r, const std::s
     std::lock_guard lock(g_mtx);
     for (auto& line : g_log) {
         if (line.id != lineId) continue;
+        TouchChatLine(line);
         if (!r.ok) {
             line.txStatus = TxStatus::Failed;
             return;
@@ -439,6 +451,20 @@ void ApplyIncomingResult(uint64_t lineId, const TranslateResult& r, const std::s
     }
 }
 
+// A job dropped from a full queue would otherwise leave its line showing
+// "translating..." forever. Put those lines back to untranslated instead, which
+// brings their "tr" button back.
+static void ResetDroppedLines(const std::vector<uint64_t>& ids) {
+    if (ids.empty()) return;
+    std::lock_guard lock(g_mtx);
+    for (auto& line : g_log) {
+        if (line.txStatus != TxStatus::Pending) continue;
+        if (std::find(ids.begin(), ids.end(), line.id) == ids.end()) continue;
+        line.txStatus = TxStatus::None;
+        TouchChatLine(line);
+    }
+}
+
 static void TxWorkerLoop();
 
 void EnsureTxWorker() {
@@ -455,19 +481,23 @@ static void EnqueueTranslate(TranslateJob job) {
     job.text = TrimCopy(job.text);
     if (job.text.empty()) return;
 
+    std::vector<uint64_t> dropped;
     {
         std::lock_guard lock(g_txMtx);
         if (job.lineId) {
             for (auto& j : g_txQueue)
                 if (j.lineId == job.lineId) return;
         }
-        while (g_txQueue.size() >= TX_QUEUE_MAX)
+        while (g_txQueue.size() >= TX_QUEUE_MAX) {
+            if (g_txQueue.back().lineId) dropped.push_back(g_txQueue.back().lineId);
             g_txQueue.pop_back();
+        }
         if (job.priority)
             g_txQueue.push_front(std::move(job));
         else
             g_txQueue.push_back(std::move(job));
     }
+    ResetDroppedLines(dropped);
     EnsureTxWorker();
 }
 
@@ -531,16 +561,24 @@ void RequestIncomingTranslate(uint64_t lineId, const std::string& body, bool pri
             if (line.txStatus == TxStatus::Pending) return;
             if (line.txStatus == TxStatus::Done && !priority) return;
             line.txStatus = TxStatus::Pending;
+            TouchChatLine(line);
             break;
         }
     }
     if (!found) return;
 
+    std::string target;
+    {
+        std::lock_guard slock(g_settingsMtx);
+        target = ToLower(TrimCopy(g_prefs.txTarget));
+    }
+    if (target.empty()) target = "en";
+
     TranslateJob job;
     job.lineId = lineId;
     job.text = body;
     job.sl = "auto";
-    job.tl = "en";
+    job.tl = target;
     job.outgoing = false;
     job.priority = priority;
     EnqueueTranslate(std::move(job));

@@ -18,29 +18,62 @@ std::atomic<HINTERNET> g_txRequest{ nullptr };
 
 static std::mutex g_logFileMtx;
 static std::mutex g_workerMtx;
-static std::vector<std::thread> g_workers;
+
+// A worker plus a flag it sets on its way out. std::thread objects used to pile
+// up in a vector for the life of the process - one per AI request, translation
+// burst and scan - each holding an OS thread handle long after the thread ended.
+struct WorkerSlot {
+    std::thread thread;
+    std::shared_ptr<std::atomic<bool>> done;
+};
+// Deliberately never destroyed. When the game exits, the CRT runs this DLL's
+// static destructors after every other thread is already gone, and a
+// std::thread that was never joined or detached calls std::terminate() from its
+// destructor - abort(), 0xC0000409 in this DLL, every time the game closed with
+// a worker still registered. DllMain cannot detach them first either: on
+// process exit the thread that held g_workerMtx may have been killed holding it.
+static std::vector<WorkerSlot>& g_workers = *new std::vector<WorkerSlot>();
 static std::chrono::steady_clock::time_point g_startTime = std::chrono::steady_clock::now();
 
-void EnsurePacificTz() {
-    static bool done = false;
-    if (!done) {
-        _putenv("TZ=PST8PDT");
-        _tzset();
-        done = true;
-    }
+static std::atomic<int> g_tzWanted{ 0 };
+static int g_tzApplied = -1;
+static std::mutex g_tzMtx;
+
+void SetTimeZoneMode(int mode) {
+    g_tzWanted.store((std::max)(0, (std::min)(2, mode)));
+}
+
+void EnsureTimeZone() {
+    const int want = g_tzWanted.load();
+    std::lock_guard lock(g_tzMtx);
+    if (want == g_tzApplied) return;
+    // "TZ=" with nothing after it removes the variable, which makes the CRT
+    // fall back to the zone Windows is set to.
+    if (want == 1) _putenv("TZ=");
+    else if (want == 2) _putenv("TZ=UTC0");
+    else _putenv("TZ=PST8PDT");
+    _tzset();
+    g_tzApplied = want;
 }
 
 void LogToFile(const std::string& msg) {
     std::lock_guard fileLock(g_logFileMtx);
-    std::ofstream log("C:\\temp\\josebot_log.txt", std::ios::app);
+    // Rotate at 8 MB so a long session can't grow the log without bound.
+    {
+        WIN32_FILE_ATTRIBUTE_DATA fa{};
+        if (GetFileAttributesExW(L"C:\\temp\\hyai_log.txt", GetFileExInfoStandard, &fa) &&
+            (((unsigned long long)fa.nFileSizeHigh << 32) | fa.nFileSizeLow) > 8ull * 1024 * 1024)
+            MoveFileExW(L"C:\\temp\\hyai_log.txt", L"C:\\temp\\hyai_log.old.txt", MOVEFILE_REPLACE_EXISTING);
+    }
+    std::ofstream log("C:\\temp\\hyai_log.txt", std::ios::app);
     if (log.is_open()) {
-        EnsurePacificTz();
+        EnsureTimeZone();
         auto now = std::chrono::system_clock::now();
         auto now_c = std::chrono::system_clock::to_time_t(now);
         struct tm timeinfo;
         localtime_s(&timeinfo, &now_c);
         char buf[80];
-        strftime(buf, sizeof(buf), "%Y-%m-%d %I:%M:%S %p PST", &timeinfo);
+        strftime(buf, sizeof(buf), "%Y-%m-%d %I:%M:%S %p", &timeinfo);
         log << buf << " " << msg << std::endl;
     }
 }
@@ -68,7 +101,7 @@ long long NowSteadyMs() {
 }
 
 std::string NowHHMM() {
-    EnsurePacificTz();
+    EnsureTimeZone();
     auto now = std::chrono::system_clock::now();
     auto now_c = std::chrono::system_clock::to_time_t(now);
     struct tm timeinfo;
@@ -79,7 +112,7 @@ std::string NowHHMM() {
 }
 
 std::string NowHHMMSS() {
-    EnsurePacificTz();
+    EnsureTimeZone();
     auto now = std::chrono::system_clock::now();
     auto now_c = std::chrono::system_clock::to_time_t(now);
     struct tm timeinfo;
@@ -342,11 +375,29 @@ void StartWorker(std::function<void()> fn) {
     try {
         std::lock_guard lock(g_workerMtx);
         if (g_shuttingDown.load()) return;
-        g_workers.emplace_back([fn = std::move(fn)]() {
-            WorkerGuard alive;
-            try { fn(); }
-            catch (...) {}
+
+        // Let go of workers that have finished. A finished thread is only
+        // returning from its lambda, so detaching it is safe and frees the slot.
+        for (auto it = g_workers.begin(); it != g_workers.end();) {
+            if (it->done->load()) {
+                if (it->thread.joinable()) it->thread.detach();
+                it = g_workers.erase(it);
+            }
+            else ++it;
+        }
+
+        auto done = std::make_shared<std::atomic<bool>>(false);
+        WorkerSlot slot;
+        slot.done = done;
+        slot.thread = std::thread([fn = std::move(fn), done]() {
+            {
+                WorkerGuard alive;
+                try { fn(); }
+                catch (...) {}
+            }
+            done->store(true);
             });
+        g_workers.push_back(std::move(slot));
     }
     catch (...) {
         LogToFile("StartWorker failed");
@@ -356,8 +407,8 @@ void StartWorker(std::function<void()> fn) {
 void DetachAllWorkers() {
     std::lock_guard lock(g_workerMtx);
     for (auto& w : g_workers) {
-        if (w.joinable())
-            w.detach();
+        if (w.thread.joinable())
+            w.thread.detach();
     }
     g_workers.clear();
 }

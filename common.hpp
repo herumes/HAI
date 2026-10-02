@@ -15,7 +15,10 @@ static const size_t SEEN_PLAYERS_MAX = 150;
 // =============================================================================
 // Logging & String Helpers
 // =============================================================================
-void EnsurePacificTz();
+// Timestamps follow one process-wide zone: 0 US Pacific (the original fixed
+// behaviour), 1 this PC's own zone, 2 UTC. EnsureTimeZone applies a change.
+void SetTimeZoneMode(int mode);
+void EnsureTimeZone();
 void LogToFile(const std::string& msg);
 
 std::string ToLower(std::string s);

@@ -5,11 +5,16 @@
 
 #include <Windows.h>
 #include <psapi.h>
+// tests/enginetest compiles the build engine on its own, without the overlay
+// or the hooks, so it has no use for these - and no include path for them.
+#ifndef HYAI_ENGINE_TEST
 #include <d3d11.h>
 #include <imgui.h>
 #include <imgui_impl_dx11.h>
 #include <imgui_impl_win32.h>
 #include <MinHook.h>
+#endif
+#include <functional>
 
 #include <string>
 #include <vector>

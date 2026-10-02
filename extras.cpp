@@ -1,5 +1,7 @@
 #include "pch.h"
 #include "extras.hpp"
+#include "aicontext.hpp"
+#include "aiprompt.hpp"
 #include "common.hpp"
 #include "chat.hpp"
 #include "settings.hpp"
@@ -489,7 +491,7 @@ namespace Extras {
 // =============================================================================
     static std::mutex g_privMtx;
     static std::vector<uint8_t> g_privKey; // 32 bytes
-    static constexpr char kPrivPrefix[] = "~jb1.";
+    static constexpr char kPrivPrefix[] = "~hy1.";
 
     static std::string Base64UrlEncode(const uint8_t* data, size_t len) {
         static const char* tbl = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -556,8 +558,8 @@ namespace Extras {
         if (!NT_SUCCESS(BCryptOpenAlgorithmProvider(&hAlg, BCRYPT_SHA256_ALGORITHM, nullptr, BCRYPT_ALG_HANDLE_HMAC_FLAG)))
             return;
 
-        // PBKDF2-HMAC-SHA256, 100k iterations, fixed salt "josebot-priv-v1"
-        const uint8_t salt[] = "josebot-priv-v1";
+        // PBKDF2-HMAC-SHA256, 100k iterations, fixed salt "hyai-priv-v1"
+        const uint8_t salt[] = "hyai-priv-v1";
         g_privKey.resize(32);
         NTSTATUS st = BCryptDeriveKeyPBKDF2(hAlg,
             (PUCHAR)pass.data(), (ULONG)pass.size(),
@@ -744,7 +746,7 @@ namespace Extras {
         ss << "=== AI CONTEXT DUMP ===\n\n";
 
         // System prompt (global free function from settings.hpp / legacy_core.cpp)
-        std::string sys = ::GetCachedSystemPrompt();
+        std::string sys = AiPrompt::Assemble(AiContext::LiveVars(""));   // every preset in use, as the model gets it
         ss << "--- system prompt (" << sys.size() << " chars) ---\n";
         if (sys.size() > 3000)
             ss << sys.substr(0, 3000) << "\n... [truncated]\n";
@@ -809,7 +811,7 @@ namespace Extras {
     {
         bodyOut.clear();
         statusCode = 0;
-        HINTERNET hSession = WinHttpOpen(L"JosebotWebSearch/1.0",
+        HINTERNET hSession = WinHttpOpen(L"HyAIWebSearch/1.0",
             WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, nullptr, nullptr, 0);
         if (!hSession) return false;
         WinHttpSetTimeouts(hSession, 15000, 15000, 20000, 45000);
